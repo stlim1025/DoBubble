@@ -157,7 +157,7 @@ class _BubbleWidgetState extends State<BubbleWidget> with TickerProviderStateMix
               width: widget.bubble.radius * 0.6,
               height: widget.bubble.radius * 0.3,
               decoration: BoxDecoration(
-                shape: BoxShape.ellipse,
+                borderRadius: BorderRadius.all(Radius.elliptical(widget.bubble.radius * 0.3, widget.bubble.radius * 0.15)),
                 gradient: LinearGradient(
                   colors: [
                     Colors.white.withOpacity(0.6),
