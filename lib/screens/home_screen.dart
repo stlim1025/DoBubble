@@ -367,7 +367,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
   }
 
   void _popBubble(TodoBubble bubble) async {
-    if (_isViewingPast) return; // 과거 날짜는 터뜨릴 수 없음
+    final isKeyboardOpen = MediaQuery.of(context).viewInsets.bottom > 0;
+    if (_isViewingPast || isKeyboardOpen) return; // 과거 날짜거나 키보드가 열려있으면 터뜨릴 수 없음
 
     HapticFeedback.mediumImpact();
 
@@ -666,9 +667,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
             ),
 
             // ── 비눗방울들 ──
-            AnimatedBuilder(
-              animation: _gameLoopController,
-              builder: (context, _) {
+            IgnorePointer(
+              ignoring: bottomInset > 0, // 키보드가 열려있으면 비눗방울 조작 불가
+              child: AnimatedBuilder(
+                animation: _gameLoopController,
+                builder: (context, _) {
                 return Stack(
                   children: _bubbles
                       .where((b) => b.state != BubbleState.popped && b.id != _morphingBubbleId)
@@ -689,6 +692,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
                 );
               },
             ),
+          ),
 
             // ── 상단 정보 바 ──
             SafeArea(
@@ -736,7 +740,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
               Positioned(
                 top: MediaQuery.of(context).padding.top + 70,
                 right: 20,
-                child: _buildGlassChip('🫧 ${_bubbles.length}'),
+                child: _buildGlassChip('🫧 ${_bubbles.length}', width: 80),
               ),
 
             // ── 하단 입력창 ──
@@ -758,7 +762,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
                 left: 0,
                 right: 0,
                 child: Center(
-                  child: _buildGlassChip('과거 기록은 터뜨릴 수 없어요 🔒'),
+                  child: _buildGlassChip('과거 기록은 터뜨릴 수 없어요 🔒', width: 220),
                 ),
               ),
           ],
@@ -857,9 +861,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
     );
   }
 
-  Widget _buildGlassChip(String label) {
+  Widget _buildGlassChip(String label, {double width = 70}) {
     return GlassmorphicContainer(
-      width: 70,
+      width: width,
       height: 32,
       borderRadius: 20,
       blur: 10,
@@ -890,7 +894,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
 
     return GlassmorphicContainer(
       width: _screenSize.width - 40,
-      height: isKeyboardOpen ? 70 : 120, // 110 -> 120 (오버플로우 방지)
+      height: isKeyboardOpen ? 80 : 120, // 70 -> 80 (오버플로우 방지)
       borderRadius: 28,
       blur: 20,
       alignment: Alignment.center,
@@ -911,25 +915,47 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
           Colors.white.withOpacity(0.1),
         ],
       ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              if (!isKeyboardOpen)
-                Padding(
-                  padding: const EdgeInsets.only(top: 10, bottom: 6), // 간격 상하 확대
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      ...[1, 2, 3, 4].map((p) => Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 4), // 버튼 사이 간격 추가
-                        child: _buildPriorityButton(p),
-                      )).toList(),
-                      const SizedBox(width: 20), // 중요도와 반복 사이 간격 대폭 확대
-                      _buildRepeatToggle(),
-                    ],
+          child: SingleChildScrollView(
+            physics: const NeverScrollableScrollPhysics(), // 애니메이션 중 오버플로우 방지
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+              // 위젯 구조 안정화를 위해 Opacity와 IgnorePointer 사용 (제거 시 포커스 잃음 방지)
+              // 중요도/반복 옵션 바 애니메이션 개선
+              AnimatedOpacity(
+                duration: const Duration(milliseconds: 300),
+                opacity: isKeyboardOpen ? 0.0 : 1.0,
+                child: IgnorePointer(
+                  ignoring: isKeyboardOpen,
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 350),
+                    curve: Curves.fastOutSlowIn,
+                    height: isKeyboardOpen ? 0 : 52,
+                    child: ClipRect(
+                      child: OverflowBox(
+                        minHeight: 52,
+                        maxHeight: 52,
+                        alignment: Alignment.bottomCenter, // 상단에서 슬라이드되며 나타나는 효과
+                        child: Padding(
+                          padding: const EdgeInsets.only(top: 10, bottom: 6),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              ...[1, 2, 3, 4].map((p) => Padding(
+                                padding: const EdgeInsets.symmetric(horizontal: 4),
+                                child: _buildPriorityButton(p),
+                              )).toList(),
+                              const SizedBox(width: 20),
+                              _buildRepeatToggle(),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
                   ),
                 ),
+              ),
               Padding(
                 padding: const EdgeInsets.only(bottom: 12),
                 child: Row(
@@ -969,7 +995,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
                   ],
                 ),
               ),
-            ],
+              ],
+            ),
           ),
     );
   }

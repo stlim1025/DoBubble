@@ -14,7 +14,7 @@ class HistoryScreen extends StatefulWidget {
 
 class _HistoryScreenState extends State<HistoryScreen> {
   final Map<String, List<TodoBubble>> _historyData = {};
-  bool _isLoading = true;
+  bool _isLoading = false; // 즉각적인 표시를 위해 초기값을 false로 설정
   final GlobalKey _todayKey = GlobalKey();
   String? _todayKeyStr; // 오늘 날짜 문자열 저장용
 
@@ -73,9 +73,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
     }
 
     if (mounted) {
-      setState(() {
-        _isLoading = false;
-      });
+      setState(() {}); // 데이터 로드 후 화면 갱신
 
       // 오늘 날짜 위치로 스크롤
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -116,11 +114,9 @@ class _HistoryScreenState extends State<HistoryScreen> {
                     children: [
                       _buildHeader(context),
                       Expanded(
-                        child: _isLoading 
-                          ? const Center(child: CircularProgressIndicator(color: Colors.white24))
-                          : _historyData.isEmpty 
-                            ? _buildEmptyState()
-                            : _buildHistoryList(),
+                        child: _historyData.isEmpty 
+                          ? _buildEmptyState()
+                          : _buildHistoryList(),
                       ),
                     ],
                   ),
@@ -136,26 +132,29 @@ class _HistoryScreenState extends State<HistoryScreen> {
   Widget _buildHeader(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.all(20.0),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        physics: const NeverScrollableScrollPhysics(), // 애니메이션 중 오버플로우 경고 방지
-        child: Row(
-          children: [
-            IconButton(
-              onPressed: () => Navigator.pop(context),
-              icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white70),
-            ),
-            const SizedBox(width: 8),
-            const Text(
-              '비눗방울 기록',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 24,
-                fontWeight: FontWeight.bold,
-                letterSpacing: -0.5,
+      child: SizedBox(
+        width: MediaQuery.of(context).size.width,
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          physics: const NeverScrollableScrollPhysics(),
+          child: Row(
+            children: [
+              IconButton(
+                onPressed: () => Navigator.pop(context),
+                icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white70),
               ),
-            ),
-          ],
+              const SizedBox(width: 8),
+              const Text(
+                '비눗방울 기록',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: -0.5,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
