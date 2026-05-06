@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "792790042397",
+    "project_id": "dobubble",
+    "storage_bucket": "dobubble.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:792790042397:android:97f48ce38d1c627f5c03f4",
+        "android_client_info": {
+          "package_name": "com.lemonary.dobubble"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyD7EjvyXDm9CICEm-hlreSPAm9eXKoL8OI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

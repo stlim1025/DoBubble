@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:audioplayers/audioplayers.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'screens/home_screen.dart';
 
@@ -18,12 +17,20 @@ class DoBubbleApp extends StatelessWidget {
       title: 'DoBubble',
       theme: ThemeData(
         brightness: Brightness.dark,
-        scaffoldBackgroundColor: const Color(0xFF121212),
+        scaffoldBackgroundColor: const Color(0xFF0A0E1A),
         colorScheme: const ColorScheme.dark(
-          primary: Colors.white,
-          secondary: Colors.blueAccent,
+          primary: Color(0xFF4488FF),
+          secondary: Color(0xFF88CCFF),
+          surface: Color(0xFF0F1826),
         ),
-        fontFamily: 'AppleSDGothicNeo', // iOS 스타일 폰트 (기본 폰트 사용)
+        // 시스템 기본 폰트 (iOS에서는 SF Pro, Android에서는 Roboto)
+        fontFamily: 'SF Pro Display',
+        textTheme: const TextTheme(
+          bodyLarge: TextStyle(color: Colors.white),
+          bodyMedium: TextStyle(color: Colors.white70),
+        ),
+        splashColor: Colors.transparent,
+        highlightColor: Colors.transparent,
       ),
       home: const HomeScreen(),
       debugShowCheckedModeBanner: false,
