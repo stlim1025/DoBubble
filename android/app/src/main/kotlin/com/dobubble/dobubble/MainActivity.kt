@@ -1,4 +1,4 @@
-package com.dobubble.dobubble
+package com.lemonary.dobubble
 
 import io.flutter.embedding.android.FlutterActivity
 
