@@ -1,18 +1,23 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'dart:ui';
 import 'dart:math' as math;
 import '../models/todo_bubble.dart';
 
 class BubbleWidget extends StatefulWidget {
   final TodoBubble bubble;
-  final AnimationController shimmerController; // 공유 컨트롤러 수신
+  final AnimationController shimmerController;
   final VoidCallback onPop;
+  final void Function(Offset position)? onLongPress;
+  final bool isReadOnly;
 
   const BubbleWidget({
     super.key,
     required this.bubble,
     required this.shimmerController,
     required this.onPop,
+    this.onLongPress,
+    this.isReadOnly = false,
   });
 
   @override
@@ -83,14 +88,18 @@ class _BubbleWidgetState extends State<BubbleWidget>
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      onTapDown: (_) => setState(() => _isPressed = true),
+      onTapDown: (_) {
+        if (!widget.isReadOnly) HapticFeedback.selectionClick();
+        setState(() => _isPressed = true);
+      },
       onTapUp: (_) {
         setState(() => _isPressed = false);
-        if (widget.bubble.state == BubbleState.floating) {
+        if (widget.bubble.state == BubbleState.floating && !widget.isReadOnly) {
           widget.onPop();
         }
       },
       onTapCancel: () => setState(() => _isPressed = false),
+      onLongPress: widget.onLongPress != null ? () => widget.onLongPress!(widget.bubble.position) : null,
       child: AnimatedBuilder(
         animation: Listenable.merge([_blowController, _popController, widget.shimmerController]),
         builder: (context, child) {
@@ -171,37 +180,36 @@ class _BubbleWidgetState extends State<BubbleWidget>
       height: r * 2,
       child: ClipOval(
         child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
+          filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
           child: Stack(
             alignment: Alignment.center,
             children: [
-              // ── 1. 메인 구체 (완전 투명한 중앙, 뚜렷하고 매우 얇은 가장자리 띠) ──
+              // ── 1. 메인 구체 (볼륨감을 위한 3D 그라데이션 및 날카로운 테두리) ──
               Container(
                 width: r * 2,
                 height: r * 2,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: Colors.transparent, // 완전히 투명하게
+                  color: Colors.transparent,
                   border: Border.all(
-                    color: Colors.white.withOpacity(0.3), // 얇고 투명한 유리 테두리
+                    color: Colors.white.withOpacity(0.4), // 더 선명하고 얇은 테두리
                     width: 0.5,
                   ),
                   gradient: RadialGradient(
-                    center: Alignment.center,
+                    center: const Alignment(-0.3, -0.3), // 입체감을 위한 광원 오프셋
                     radius: 1.0,
                     colors: [
-                      Colors.white.withOpacity(0.0), // 안쪽은 완전 투명
-                      Colors.white.withOpacity(0.0),
-                      Colors.white.withOpacity(0.05),
-                      Colors.white.withOpacity(0.3), // 가장자리만 살짝 반사
+                      Colors.white.withOpacity(0.12), // 내부의 은은한 볼륨감
+                      Colors.white.withOpacity(0.02),
+                      Colors.white.withOpacity(0.2), // 가장자리 반사광
                     ],
-                    stops: const [0.0, 0.8, 0.95, 1.0],
+                    stops: const [0.0, 0.6, 1.0],
                   ),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.white.withOpacity(0.05),
-                      blurRadius: 15,
-                      spreadRadius: 2,
+                      color: Colors.white.withOpacity(0.08),
+                      blurRadius: 20,
+                      spreadRadius: 1,
                     ),
                   ],
                 ),

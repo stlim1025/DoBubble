@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'dart:math';
 
-enum BubbleState { blowing, floating, popping }
+enum BubbleState { blowing, floating, popping, popped }
 
 class TodoBubble {
   final String id;
@@ -25,6 +25,7 @@ class TodoBubble {
   final Color tintColor;
   final int priority; // 1 (가장 중요) ~ 4
   final bool isRepeating;
+  final DateTime? repeatStartDate; // 반복 시작 날짜
   final DateTime createdAt;
 
   TodoBubble({
@@ -36,6 +37,7 @@ class TodoBubble {
     this.radius = 60.0,
     this.priority = 1,
     this.isRepeating = false,
+    this.repeatStartDate,
     DateTime? createdAt,
     Color? tintColor,
   })  : createdAt = createdAt ?? DateTime.now(),
@@ -116,6 +118,7 @@ class TodoBubble {
       'tintColor': tintColor.value,
       'priority': priority,
       'isRepeating': isRepeating,
+      'repeatStartDate': repeatStartDate?.toIso8601String(),
       'createdAt': createdAt.toIso8601String(),
     };
   }
@@ -131,6 +134,7 @@ class TodoBubble {
       tintColor: json['tintColor'] != null ? Color(json['tintColor']) : null,
       priority: json['priority'] ?? 1,
       isRepeating: json['isRepeating'] ?? false,
+      repeatStartDate: json['repeatStartDate'] != null ? DateTime.parse(json['repeatStartDate']) : null,
       createdAt: json['createdAt'] != null ? DateTime.parse(json['createdAt']) : null,
     );
   }

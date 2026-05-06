@@ -3,10 +3,13 @@ import 'package:flutter/services.dart';
 import 'dart:math';
 import 'dart:ui';
 import 'dart:convert';
+import 'dart:async';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/todo_bubble.dart';
 import '../widgets/bubble_widget.dart';
+import 'history_screen.dart';
 import 'package:audioplayers/audioplayers.dart';
+import 'package:glassmorphism/glassmorphism.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -16,7 +19,7 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, WidgetsBindingObserver {
-  final List<TodoBubble> _bubbles = [];
+  List<TodoBubble> _bubbles = [];
   final TextEditingController _taskController = TextEditingController();
   final FocusNode _focusNode = FocusNode();
   final AudioPlayer _audioPlayer = AudioPlayer();
@@ -24,35 +27,61 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
   late AnimationController _gameLoopController;
   late AnimationController _bgAnimController;
   late Animation<double> _bgAnim;
-  late AnimationController _shimmerController; // 공유 shimmer 컨트롤러
-  Size _screenSize = Size.zero; // 화면 크기 캐싱
-  int _selectedPriority = 1; // 기본 중요도 (1~4)
-  bool _isRepeating = false; // 반복 여부
-  final List<TodoBubble> _repeatingTemplates = []; // 반복 할일 템플릿
+  late AnimationController _shimmerController;
+  Size _screenSize = Size.zero;
+  int _selectedPriority = 1;
+  bool _isRepeating = false;
+  final List<TodoBubble> _repeatingTemplates = [];
+
+  // 날짜 관련
+  DateTime _today = DateTime.now();
+  DateTime _selectedDate = DateTime.now();
+  final Map<String, List<TodoBubble>> _bubblesCache = {};
+  Timer? _midnightTimer;
 
   bool _isInputFocused = false;
+  String? _morphingBubbleId; // 현재 팝업으로 변환 중인 비눗방울 ID
+
+  // 날짜 헬퍼
+  DateTime get _todayDate => DateTime(_today.year, _today.month, _today.day);
+  DateTime get _selectedDateNorm => DateTime(_selectedDate.year, _selectedDate.month, _selectedDate.day);
+  String _dateKey(DateTime d) => '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+  bool get _isViewingToday => _dateKey(_selectedDate) == _dateKey(_today);
+  bool get _isViewingPast => _selectedDateNorm.isBefore(_todayDate);
+  bool get _isViewingFuture => _selectedDateNorm.isAfter(_todayDate);
+
+  String get _dateDisplayText {
+    const weekdays = ['월', '화', '수', '목', '금', '토', '일'];
+    final d = _selectedDate;
+    final wd = weekdays[d.weekday - 1];
+    if (_isViewingToday) return '${d.month}월 ${d.day}일 (${wd}) · 오늘';
+    final diff = _selectedDateNorm.difference(_todayDate).inDays;
+    if (diff == -1) return '${d.month}월 ${d.day}일 (${wd}) · 어제';
+    if (diff == 1) return '${d.month}월 ${d.day}일 (${wd}) · 내일';
+    return '${d.month}월 ${d.day}일 (${wd})';
+  }
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _today = DateTime.now();
+    _selectedDate = _today;
     _loadBubbles();
+    _setupMidnightTimer();
 
-    // 게임 루프 (물리 업데이트)
     _gameLoopController = AnimationController(
       vsync: this,
       duration: const Duration(days: 365),
     )..addListener(_updatePhysics);
     _gameLoopController.forward();
 
-    // 배경 그라데이션 애니메이션
     _bgAnimController = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 8),
     )..repeat(reverse: true);
     _bgAnim = CurvedAnimation(parent: _bgAnimController, curve: Curves.easeInOut);
 
-    // 공유 shimmer 루프 (모든 버블이 이 컨트롤러를 공유)
     _shimmerController = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 3),
@@ -68,6 +97,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _midnightTimer?.cancel();
     _saveBubbles();
     _gameLoopController.dispose();
     _bgAnimController.dispose();
@@ -76,6 +106,40 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
     _focusNode.dispose();
     _audioPlayer.dispose();
     super.dispose();
+  }
+
+  void _setupMidnightTimer() {
+    _midnightTimer?.cancel();
+    final now = DateTime.now();
+    final tomorrow = DateTime(now.year, now.month, now.day + 1);
+    final duration = tomorrow.difference(now);
+    _midnightTimer = Timer(duration, () {
+      if (mounted) {
+        final wasViewingToday = _isViewingToday;
+        setState(() {
+          _today = DateTime.now();
+          if (wasViewingToday) {
+            _selectedDate = _today;
+            _loadBubbles();
+          }
+        });
+        _setupMidnightTimer();
+      }
+    });
+  }
+
+  void _navigateDate(int direction) async {
+    // 이동 전 현재 날짜의 데이터 확실히 저장
+    await _saveBubbles();
+    
+    setState(() {
+      _bubbles = []; // 화면 즉시 비우기 (로딩 느낌 및 잔상 방지)
+      _selectedDate = DateTime(
+        _selectedDate.year, _selectedDate.month, _selectedDate.day + direction,
+      );
+    });
+    
+    _loadBubblesForDate(_selectedDate);
   }
 
   @override
@@ -92,16 +156,19 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
   }
 
   Future<void> _loadBubbles() async {
+    _loadBubblesForDate(_selectedDate);
+  }
+
+  Future<void> _loadBubblesForDate(DateTime date) async {
     final prefs = await SharedPreferences.getInstance();
-    final String? bubblesJson = prefs.getString('saved_bubbles');
+    final String key = 'bubbles_${_dateKey(date)}';
+    final String? bubblesJson = prefs.getString(key);
     final String? repeatingJson = prefs.getString('repeating_templates');
-    final String? lastDateStr = prefs.getString('last_open_date');
     
     final now = DateTime.now();
     final todayMidnight = DateTime(now.year, now.month, now.day);
     
     List<TodoBubble> loadedBubbles = [];
-    List<TodoBubble> repeatingTemplates = [];
 
     if (bubblesJson != null) {
       try {
@@ -113,7 +180,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
           }
         }
       } catch (e) {
-        debugPrint('Error loading bubbles: $e');
+        debugPrint('Error loading bubbles for $key: $e');
       }
     }
 
@@ -129,29 +196,24 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
       }
     }
 
-    // 날짜가 바뀌었는지 확인
-    bool isNewDay = false;
-    if (lastDateStr != null) {
-      final lastDate = DateTime.parse(lastDateStr);
-      if (lastDate.isBefore(todayMidnight)) {
-        isNewDay = true;
-      }
-    } else {
-      isNewDay = true;
-    }
-
-    if (isNewDay) {
-      // 1. 반복 안 하는 옛날 버블 삭제
-      loadedBubbles.removeWhere((b) => !b.isRepeating && b.createdAt.isBefore(todayMidnight));
-      
-      // 2. 반복 하는 버블들 보충 (이미 있으면 중복 생성 안 함)
+    // 오늘 혹은 미래 날짜일 경우 반복 할일 보충
+    final currentTargetDate = DateTime(date.year, date.month, date.day);
+    if (_dateKey(date) == _dateKey(now) || date.isAfter(now)) {
+      // 반복 하는 버블들 보충 (이미 있으면 중복 생성 안 함)
       for (var template in _repeatingTemplates) {
+        // 시작 날짜가 있고 현재 로드하려는 날짜가 시작 날짜보다 이전이면 패스
+        if (template.repeatStartDate != null) {
+          final startDate = DateTime(template.repeatStartDate!.year, template.repeatStartDate!.month, template.repeatStartDate!.day);
+          if (currentTargetDate.isBefore(startDate)) {
+            continue;
+          }
+        }
+
         bool exists = loadedBubbles.any((b) => b.task == template.task && b.isRepeating);
         if (!exists) {
-          // 새로운 위치와 속도로 재생성
           final random = Random();
           final startX = _screenSize.width / 2 + (random.nextDouble() - 0.5) * 40;
-          final startY = _screenSize.height / 2; // 중앙 부근에서 생성
+          final startY = _screenSize.height / 2;
           
           loadedBubbles.add(TodoBubble(
             id: DateTime.now().millisecondsSinceEpoch.toString() + template.id,
@@ -165,9 +227,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
           ));
         }
       }
-      
-      // 날짜 업데이트 저장
-      await prefs.setString('last_open_date', now.toIso8601String());
+
+      // 오늘 날짜인 경우에만 마지막 접속일 갱신
+      if (_dateKey(date) == _dateKey(now)) {
+        await prefs.setString('last_open_date', now.toIso8601String());
+      }
     }
 
     setState(() {
@@ -178,12 +242,13 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
 
   Future<void> _saveBubbles() async {
     final prefs = await SharedPreferences.getInstance();
+    final String key = 'bubbles_${_dateKey(_selectedDate)}';
     
-    // 현재 활성 버블 저장
-    final String bubblesJson = jsonEncode(_bubbles.where((b) => b.state != BubbleState.popping).map((b) => b.toJson()).toList());
-    await prefs.setString('saved_bubbles', bubblesJson);
+    // 모든 버블 저장 (popped 포함)
+    final String bubblesJson = jsonEncode(_bubbles.map((b) => b.toJson()).toList());
+    await prefs.setString(key, bubblesJson);
     
-    // 반복 할일 템플릿 저장
+    // 반복 할일 템플릿 저장 (항상 공통)
     final String repeatingJson = jsonEncode(_repeatingTemplates.map((b) => b.toJson()).toList());
     await prefs.setString('repeating_templates', repeatingJson);
   }
@@ -198,16 +263,17 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
     final bottomLimit = _screenSize.height - inputBarBottom - inputBarHeight;
 
     for (var bubble in _bubbles) {
-      if (bubble.state != BubbleState.popping) { // 불기 중에도 이동
+      if (bubble.state != BubbleState.popping && bubble.state != BubbleState.popped) { 
         bubble.update(_screenSize, bottomLimit: bottomLimit);
       }
     }
 
-    // 버블 간 충돌 감지 (탄성 충돌)
-    for (int i = 0; i < _bubbles.length; i++) {
-      for (int j = i + 1; j < _bubbles.length; j++) {
-        final a = _bubbles[i];
-        final b = _bubbles[j];
+    // 버블 간 충돌 감지 (탄성 충돌) - 활성 버블끼리만
+    final activeBubbles = _bubbles.where((b) => b.state != BubbleState.popping && b.state != BubbleState.popped).toList();
+    for (int i = 0; i < activeBubbles.length; i++) {
+      for (int j = i + 1; j < activeBubbles.length; j++) {
+        final a = activeBubbles[i];
+        final b = activeBubbles[j];
         if (a.state == BubbleState.popping || b.state == BubbleState.popping) continue;
 
         final dx = b.position.dx - a.position.dx;
@@ -284,6 +350,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
       radius: radius,
       priority: _selectedPriority,
       isRepeating: _isRepeating,
+      repeatStartDate: _isRepeating ? _selectedDateNorm : null, // 해당 날짜 이후부터 반복
       state: BubbleState.blowing,
     );
 
@@ -300,7 +367,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
   }
 
   void _popBubble(TodoBubble bubble) async {
-    HapticFeedback.heavyImpact();
+    if (_isViewingPast) return; // 과거 날짜는 터뜨릴 수 없음
+
+    HapticFeedback.mediumImpact();
 
     setState(() {
       bubble.state = BubbleState.popping;
@@ -317,111 +386,457 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
     Future.delayed(const Duration(milliseconds: 450), () {
       if (mounted) {
         setState(() {
-          _bubbles.removeWhere((b) => b.id == bubble.id);
+          // 제거 대신 상태만 popped로 변경하여 데이터 유지
+          bubble.state = BubbleState.popped;
         });
         _saveBubbles();
       }
     });
   }
 
+  void _toggleRepeat(TodoBubble bubble, Offset startPos) {
+    if (!bubble.isRepeating) return;
+
+    setState(() => _morphingBubbleId = bubble.id);
+
+    showGeneralDialog(
+      context: context,
+      barrierDismissible: true,
+      barrierLabel: 'Dismiss',
+      barrierColor: Colors.transparent, // 배경 어둡게 하지 않음
+      transitionDuration: const Duration(milliseconds: 550),
+      pageBuilder: (context, anim1, anim2) => const SizedBox.shrink(),
+      transitionBuilder: (context, anim1, anim2, child) {
+        final curve = CurvedAnimation(
+          parent: anim1,
+          curve: Curves.easeOutBack,
+          reverseCurve: Curves.easeInCirc, // 닫힐 때는 더 빠르게 빨려 들어가는 느낌
+        );
+        
+        final screenWidth = MediaQuery.of(context).size.width;
+        final screenHeight = MediaQuery.of(context).size.height;
+        
+        // 실시간 현재 비눗방울 위치 찾기 (닫힐 때 위치 동기화)
+        Offset currentBubblePos = startPos;
+        try {
+          final liveBubble = _bubbles.firstWhere((b) => b.id == bubble.id);
+          currentBubblePos = liveBubble.position;
+        } catch (_) {}
+
+        // 다이얼로그 크기 충분히 확보 (오버플로우 방지)
+        const dialogWidth = 320.0;
+        const dialogHeight = 330.0; // 310 -> 330 (픽셀 오버플로우 방지 및 여유 공간 확보)
+        // _screenSize를 직접 사용하여 HomeScreen의 좌표계와 일치시킴
+        final targetPos = Offset(_screenSize.width / 2, _screenSize.height / 2);
+
+        // 닫힐 때는 실시간 위치(currentBubblePos)로, 열릴 때는 시작 위치(startPos) 기반으로  lerp
+        // 사실 항상 currentBubblePos를 사용하면 됨
+        final currentPos = Offset.lerp(currentBubblePos, targetPos, curve.value)!;
+        final currentWidth = lerpDouble(bubble.radius * 2, dialogWidth, curve.value)!;
+        final currentHeight = lerpDouble(bubble.radius * 2, dialogHeight, curve.value)!;
+        final currentRadius = lerpDouble(bubble.radius, 32, curve.value)!;
+        
+        return Stack(
+          children: [
+            Positioned(
+              left: currentPos.dx - currentWidth / 2,
+              top: currentPos.dy - currentHeight / 2,
+              child: GlassmorphicContainer(
+                width: currentWidth,
+                height: currentHeight,
+                borderRadius: currentRadius,
+                blur: 18, // 25 -> 18 (15~20 사이 최적값)
+                alignment: Alignment.center,
+                border: 0.5, // 1.2 -> 0.5 (날카로운 단면 질감)
+                linearGradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [Colors.white.withOpacity(0.12), Colors.white.withOpacity(0.06)],
+                ),
+                borderGradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    Colors.white.withOpacity(0.5), // 상단 밝게
+                    Colors.black.withOpacity(0.2), // 하단 어둡게 (단면 질감)
+                  ],
+                ),
+                child: Material(
+                  color: Colors.transparent, // 텍스트의 노란 밑줄(No Material) 이슈 해결
+                  child: SingleChildScrollView(
+                    physics: const BouncingScrollPhysics(), // 오버플로우 발생 시 스크롤 가능하도록 변경
+                    child: Opacity(
+                      opacity: ((curve.value - 0.3) / 0.7).clamp(0.0, 1.0),
+                      child: Container(
+                        height: dialogHeight,
+                        padding: const EdgeInsets.all(20.0),
+                        child: _buildDialogContent(context, bubble),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    ).then((_) {
+      // 애니메이션이 완전히 끝날 때까지 약간의 여유(520ms)를 두고 비눗방울 표시
+      Future.delayed(const Duration(milliseconds: 520), () {
+        if (mounted) {
+          setState(() => _morphingBubbleId = null);
+        }
+      });
+    });
+  }
+
+  Future<void> _cleanupFutureRepeatingTasks(String taskName) async {
+    final prefs = await SharedPreferences.getInstance();
+    final keys = prefs.getKeys().where((k) => k.startsWith('bubbles_')).toList();
+    
+    // 현재 선택된 날짜와 같거나 이후인 모든 날짜 데이터에서 해당 할 일 삭제
+    final selectedKey = _dateKey(_selectedDate);
+    
+    for (var key in keys) {
+      final dateStr = key.replaceFirst('bubbles_', '');
+      if (dateStr.compareTo(selectedKey) >= 0) {
+        final jsonStr = prefs.getString(key);
+        if (jsonStr != null) {
+          final List<dynamic> decoded = jsonDecode(jsonStr);
+          final bubbles = decoded.map((item) => TodoBubble.fromJson(item)).toList();
+          
+          final initialCount = bubbles.length;
+          bubbles.removeWhere((b) => b.task == taskName);
+          
+          if (bubbles.length != initialCount) {
+            await prefs.setString(key, jsonEncode(bubbles.map((b) => b.toJson()).toList()));
+            // 캐시에서도 삭제
+            _bubblesCache.remove(dateStr);
+          }
+        }
+      }
+    }
+    
+    // 현재 화면의 비눗방울에서도 삭제 (만약 현재 날짜가 선택된 날짜와 같다면)
+    setState(() {
+      _bubbles.removeWhere((b) => b.task == taskName);
+    });
+  }
+
+  Widget _buildDialogContent(BuildContext context, TodoBubble bubble) {
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        const Icon(Icons.sync_disabled_rounded, color: Colors.white, size: 36),
+        const SizedBox(height: 16),
+        const Text(
+          '반복 해제',
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+            letterSpacing: -0.5,
+          ),
+        ),
+        const SizedBox(height: 12),
+        Text(
+          '\"${bubble.task}\"\n이 할 일을 더 이상 반복하지 않을까요?',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            color: Colors.white.withOpacity(0.8),
+            fontSize: 15,
+            height: 1.5,
+          ),
+        ),
+        const SizedBox(height: 24),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Expanded(
+              child: TextButton(
+                onPressed: () => Navigator.pop(context),
+                style: TextButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                ),
+                child: const Text('취소', style: TextStyle(color: Colors.white60)),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: ElevatedButton(
+                onPressed: () {
+                  final taskToDelete = bubble.task;
+                  setState(() {
+                    _repeatingTemplates.removeWhere((t) => t.task == taskToDelete);
+                  });
+                  _saveBubbles();
+                  _cleanupFutureRepeatingTasks(taskToDelete); // 미래 데이터 정리
+                  Navigator.pop(context);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: const Text('이제 더 이상 반복되지 않아요.'),
+                      backgroundColor: Colors.black87,
+                      behavior: SnackBarBehavior.floating,
+                      margin: const EdgeInsets.all(20),
+                      duration: const Duration(seconds: 1),
+                    ),
+                  );
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.redAccent.withOpacity(0.8),
+                  foregroundColor: Colors.white,
+                  elevation: 0,
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                ),
+                child: const Text('해제하기'),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final bottomInset = MediaQuery.of(context).viewInsets.bottom;
-    final screenHeight = MediaQuery.of(context).size.height;
 
     return Scaffold(
       resizeToAvoidBottomInset: false,
-      body: Stack(
-        children: [
-          // ── 배경 및 빈 공간 터치 처리 ──
-          Positioned.fill(
-            child: GestureDetector(
-              onTap: () => FocusScope.of(context).unfocus(),
-              behavior: HitTestBehavior.opaque,
-              child: AnimatedBuilder(
-                animation: _bgAnim,
-                builder: (context, child) {
-                  return Stack(
-                    children: [
-                      Container(
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                            colors: [
-                              Color.lerp(const Color(0xFF0F172A), const Color(0xFF1E1B4B), _bgAnim.value)!,
-                              Color.lerp(const Color(0xFF1E1B4B), const Color(0xFF0B1120), _bgAnim.value)!,
-                            ],
+      body: GestureDetector(
+        onHorizontalDragEnd: (details) {
+          if (details.primaryVelocity! > 500) {
+            // Swipe Right -> 이전 날
+            _navigateDate(-1);
+            HapticFeedback.mediumImpact();
+          } else if (details.primaryVelocity! < -500) {
+            // Swipe Left -> 다음 날
+            _navigateDate(1);
+            HapticFeedback.mediumImpact();
+          }
+        },
+        child: Stack(
+          children: [
+            // ── 배경 및 빈 공간 터치 처리 ──
+            Positioned.fill(
+              child: GestureDetector(
+                onTap: () => FocusScope.of(context).unfocus(),
+                behavior: HitTestBehavior.opaque,
+                child: AnimatedBuilder(
+                  animation: _bgAnim,
+                  builder: (context, child) {
+                    return Stack(
+                      children: [
+                        Container(
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                              colors: [
+                                Color.lerp(const Color(0xFF0F172A), const Color(0xFF1E1B4B), _bgAnim.value)!,
+                                Color.lerp(const Color(0xFF1E1B4B), const Color(0xFF0B1120), _bgAnim.value)!,
+                              ],
+                            ),
                           ),
                         ),
-                      ),
-                      // Animated glowing orbs for the glass effect
-                      Positioned(
-                        top: 100 + 50 * sin(_bgAnim.value * pi),
-                        left: -100,
-                        child: _buildGlowOrb(const Color(0xFF4488FF), 400, 0.6),
-                      ),
-                      Positioned(
-                        bottom: -150,
-                        right: -100 + 50 * cos(_bgAnim.value * pi),
-                        child: _buildGlowOrb(const Color(0xFF88CCFF), 500, 0.4),
-                      ),
-                      Positioned(
-                        top: MediaQuery.of(context).size.height * 0.4,
-                        right: -50,
-                        child: _buildGlowOrb(const Color(0xFF6366F1), 300, 0.5),
-                      ),
-                    ],
-                  );
-                },
-              ),
-            ),
-          ),
-
-          // ── 비눗방울들 ──
-          AnimatedBuilder(
-            animation: _gameLoopController,
-            builder: (context, _) {
-              return Stack(
-                children: _bubbles.map((bubble) {
-                  return Positioned(
-                    left: bubble.position.dx - bubble.radius,
-                    top: bubble.position.dy - bubble.radius,
-                    child: BubbleWidget(
-                      key: ValueKey(bubble.id),
-                      bubble: bubble,
-                      shimmerController: _shimmerController,
-                      onPop: () => _popBubble(bubble),
-                    ),
-                  );
-                }).toList(),
-              );
-            },
-          ),
-
-          // ── 우측 상단 카운트 칩 ──
-          if (_bubbles.isNotEmpty)
-            SafeArea(
-              child: Align(
-                alignment: Alignment.topRight,
-                child: Padding(
-                  padding: const EdgeInsets.only(top: 16, right: 20),
-                  child: _buildGlassChip('🫧 ${_bubbles.length}'),
+                        // Animated glowing orbs
+                        Positioned(
+                          top: 100 + 50 * sin(_bgAnim.value * pi),
+                          left: -100,
+                          child: _buildGlowOrb(const Color(0xFF4488FF), 400, 0.6),
+                        ),
+                        Positioned(
+                          bottom: -150,
+                          right: -100 + 50 * cos(_bgAnim.value * pi),
+                          child: _buildGlowOrb(const Color(0xFF88CCFF), 500, 0.4),
+                        ),
+                        Positioned(
+                          top: MediaQuery.of(context).size.height * 0.4,
+                          right: -50,
+                          child: _buildGlowOrb(const Color(0xFF6366F1), 300, 0.5),
+                        ),
+                      ],
+                    );
+                  },
                 ),
               ),
             ),
 
-          // ── 하단 입력창 ──
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: bottomInset > 0 ? bottomInset + 16 : 32,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              child: _buildBottomInputBar(),
+            // ── 비눗방울들 ──
+            AnimatedBuilder(
+              animation: _gameLoopController,
+              builder: (context, _) {
+                return Stack(
+                  children: _bubbles
+                      .where((b) => b.state != BubbleState.popped && b.id != _morphingBubbleId)
+                      .map((bubble) {
+                    return Positioned(
+                      left: bubble.position.dx - bubble.radius,
+                      top: bubble.position.dy - bubble.radius,
+                      child: BubbleWidget(
+                        key: ValueKey(bubble.id),
+                        bubble: bubble,
+                        shimmerController: _shimmerController,
+                        onPop: () => _popBubble(bubble),
+                        onLongPress: bubble.isRepeating ? (pos) => _toggleRepeat(bubble, pos) : null,
+                        isReadOnly: _isViewingPast,
+                      ),
+                    );
+                  }).toList(),
+                );
+              },
+            ),
+
+            // ── 상단 정보 바 ──
+            SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    // 이전날 버튼
+                    _buildNavButton(Icons.chevron_left_rounded, () => _navigateDate(-1)),
+                    
+                    // 오늘 날짜 칩 및 기록 버튼 (중첩)
+                    Expanded(
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          _buildNavButton(Icons.list_alt_rounded, () {
+                            // 일반 탭 시 기본 이동
+                            _goToHistory(context);
+                          }, onLongPress: () {
+                            // 꾹 눌렀을 때도 동일하게 이동 (요청 사항)
+                            _goToHistory(context);
+                            HapticFeedback.heavyImpact();
+                          }),
+                          const SizedBox(width: 12),
+                          _buildGlassDateChip(_dateDisplayText, () {
+                            if (!_isViewingToday) {
+                              setState(() => _selectedDate = _today);
+                              _loadBubbles();
+                            }
+                          }),
+                        ],
+                      ),
+                    ),
+
+                    // 다음날 버튼
+                    _buildNavButton(Icons.chevron_right_rounded, () => _navigateDate(1)),
+                  ],
+                ),
+              ),
+            ),
+
+            // ── 우측 하단 카운트 칩 ──
+            if (_bubbles.isNotEmpty)
+              Positioned(
+                top: MediaQuery.of(context).padding.top + 70,
+                right: 20,
+                child: _buildGlassChip('🫧 ${_bubbles.length}'),
+              ),
+
+            // ── 하단 입력창 ──
+            if (!_isViewingPast)
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: bottomInset > 0 ? bottomInset + 16 : 32,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  child: _buildBottomInputBar(),
+                ),
+              ),
+            
+            // 과거 날짜 안내 메시지
+            if (_isViewingPast)
+              Positioned(
+                bottom: 50,
+                left: 0,
+                right: 0,
+                child: Center(
+                  child: _buildGlassChip('과거 기록은 터뜨릴 수 없어요 🔒'),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _goToHistory(BuildContext context) {
+    _saveBubbles();
+    Navigator.push(
+      context,
+      PageRouteBuilder(
+        transitionDuration: const Duration(milliseconds: 600),
+        reverseTransitionDuration: const Duration(milliseconds: 500),
+        pageBuilder: (context, animation, secondaryAnimation) => const HistoryScreen(),
+        transitionsBuilder: (context, animation, secondaryAnimation, child) {
+          final curve = CurvedAnimation(parent: animation, curve: Curves.easeInOutExpo);
+          return FadeTransition(
+            opacity: curve,
+            child: ScaleTransition(
+              scale: Tween<double>(begin: 0.8, end: 1.0).animate(curve),
+              child: child,
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildNavButton(IconData icon, VoidCallback onTap, {VoidCallback? onLongPress}) {
+    return Hero(
+      tag: icon == Icons.list_alt_rounded ? 'history_icon' : 'nav_${icon.codePoint}',
+      child: InteractiveGlassWidget(
+        onTap: onTap,
+        onLongPress: onLongPress,
+        child: Container(
+          width: 40,
+          height: 40,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: Colors.white.withOpacity(0.1),
+            border: Border.all(color: Colors.white.withOpacity(0.2)),
+          ),
+          child: Icon(icon, color: Colors.white.withOpacity(0.8)),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildGlassDateChip(String label, VoidCallback onTap) {
+    return GlassmorphicContainer(
+      width: 200, // 넓이 대략 설정
+      height: 44,
+      borderRadius: 25,
+      blur: 15,
+      alignment: Alignment.center,
+      border: 1,
+      linearGradient: LinearGradient(
+        colors: [Colors.white.withOpacity(0.15), Colors.white.withOpacity(0.05)],
+      ),
+      borderGradient: LinearGradient(
+        colors: [Colors.white.withOpacity(0.4), Colors.white.withOpacity(0.1)],
+      ),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(25),
+        child: Center(
+          child: Text(
+            label,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+              letterSpacing: -0.5,
             ),
           ),
-        ],
+        ),
       ),
     );
   }
@@ -443,34 +858,26 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
   }
 
   Widget _buildGlassChip(String label) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(20),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [
-                Colors.white.withOpacity(0.20),
-                Colors.white.withOpacity(0.05),
-              ],
-            ),
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(
-              color: Colors.white.withOpacity(0.25),
-              width: 0.5,
-            ),
-          ),
-          child: Text(
-            label,
-            style: TextStyle(
-              color: Colors.white.withOpacity(0.8),
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-            ),
+    return GlassmorphicContainer(
+      width: 70,
+      height: 32,
+      borderRadius: 20,
+      blur: 10,
+      alignment: Alignment.center,
+      border: 0.5,
+      linearGradient: LinearGradient(
+        colors: [Colors.white.withOpacity(0.15), Colors.white.withOpacity(0.05)],
+      ),
+      borderGradient: LinearGradient(
+        colors: [Colors.white.withOpacity(0.3), Colors.white.withOpacity(0.1)],
+      ),
+      child: Center(
+        child: Text(
+          label,
+          style: TextStyle(
+            color: Colors.white.withOpacity(0.8),
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
           ),
         ),
       ),
@@ -478,146 +885,124 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
   }
 
   Widget _buildBottomInputBar() {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(28),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 200),
-          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [
-                Colors.white.withOpacity(_isInputFocused ? 0.25 : 0.15),
-                Colors.white.withOpacity(_isInputFocused ? 0.10 : 0.05),
-              ],
-            ),
-            borderRadius: BorderRadius.circular(28),
-            border: Border.all(
-              color: Colors.white.withOpacity(_isInputFocused ? 0.35 : 0.20),
-              width: 0.5,
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.3),
-                blurRadius: 10,
-                spreadRadius: 1,
-                offset: const Offset(0, 4),
-              ),
-            ],
-          ),
+    final bottomInset = MediaQuery.of(context).viewInsets.bottom;
+    final isKeyboardOpen = bottomInset > 0;
+
+    return GlassmorphicContainer(
+      width: _screenSize.width - 40,
+      height: isKeyboardOpen ? 70 : 120, // 110 -> 120 (오버플로우 방지)
+      borderRadius: 28,
+      blur: 20,
+      alignment: Alignment.center,
+      border: 1,
+      linearGradient: LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [
+          Colors.white.withOpacity(_isInputFocused ? 0.15 : 0.08),
+          Colors.white.withOpacity(_isInputFocused ? 0.08 : 0.04),
+        ],
+      ),
+      borderGradient: LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [
+          Colors.white.withOpacity(0.4),
+          Colors.white.withOpacity(0.1),
+        ],
+      ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              // 중요도 선택 버튼들
+              if (!isKeyboardOpen)
+                Padding(
+                  padding: const EdgeInsets.only(top: 10, bottom: 6), // 간격 상하 확대
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      ...[1, 2, 3, 4].map((p) => Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 4), // 버튼 사이 간격 추가
+                        child: _buildPriorityButton(p),
+                      )).toList(),
+                      const SizedBox(width: 20), // 중요도와 반복 사이 간격 대폭 확대
+                      _buildRepeatToggle(),
+                    ],
+                  ),
+                ),
               Padding(
-                padding: const EdgeInsets.only(top: 8, bottom: 4),
+                padding: const EdgeInsets.only(bottom: 12),
                 child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    ...[1, 2, 3, 4].map((p) => _buildPriorityButton(p)).toList(),
-                    const SizedBox(width: 12),
-                    _buildRepeatToggle(),
+                    Expanded(
+                      child: TextField(
+                        controller: _taskController,
+                        focusNode: _focusNode,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w400,
+                          letterSpacing: 0.2,
+                        ),
+                        decoration: InputDecoration(
+                          hintText: '할 일을 입력하세요...',
+                          hintStyle: TextStyle(
+                            color: Colors.white.withOpacity(0.35),
+                            fontSize: 15,
+                          ),
+                          border: InputBorder.none,
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 12,
+                          ),
+                        ),
+                        onSubmitted: (value) {
+                          _addTodo(value);
+                          _focusNode.requestFocus();
+                        },
+                        textInputAction: TextInputAction.send,
+                        cursorColor: Colors.white.withOpacity(0.7),
+                      ),
+                    ),
+                    _buildSendButton(),
+                    const SizedBox(width: 8),
                   ],
                 ),
               ),
-              Row(
-                children: [
-                  // 텍스트 입력 필드
-                  Expanded(
-                    child: TextField(
-                      controller: _taskController,
-                      focusNode: _focusNode,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 15,
-                        fontWeight: FontWeight.w400,
-                        letterSpacing: 0.2,
-                      ),
-                      decoration: InputDecoration(
-                        hintText: '할 일을 입력하세요...',
-                        hintStyle: TextStyle(
-                          color: Colors.white.withOpacity(0.35),
-                          fontSize: 15,
-                        ),
-                        border: InputBorder.none,
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 12,
-                        ),
-                      ),
-                      onSubmitted: (value) {
-                        _addTodo(value);
-                        _focusNode.requestFocus();
-                      },
-                      textInputAction: TextInputAction.send,
-                      cursorColor: Colors.white.withOpacity(0.7),
-                    ),
-                  ),
-                  _buildSendButton(),
-                ],
-              ),
             ],
           ),
-        ),
-      ),
     );
   }
 
   Widget _buildSendButton() {
-    return InteractiveGlassWidget(
-      onTap: () {
-        _addTodo(_taskController.text);
-        _focusNode.unfocus();
-      },
-      child: ClipRRect(
+    return GlassmorphicContainer(
+      width: 44,
+      height: 44,
+      borderRadius: 22,
+      blur: 10,
+      alignment: Alignment.center,
+      border: 1,
+      linearGradient: LinearGradient(
+        colors: _isInputFocused
+            ? [const Color(0xFF4488FF).withOpacity(0.4), const Color(0xFF2255CC).withOpacity(0.2)]
+            : [Colors.white.withOpacity(0.1), Colors.white.withOpacity(0.05)],
+      ),
+      borderGradient: LinearGradient(
+        colors: _isInputFocused
+            ? [const Color(0xFF88BBFF).withOpacity(0.5), const Color(0xFF4488FF).withOpacity(0.2)]
+            : [Colors.white.withOpacity(0.3), Colors.white.withOpacity(0.1)],
+      ),
+      child: InkWell(
+        onTap: () {
+          _addTodo(_taskController.text);
+          _focusNode.unfocus();
+        },
         borderRadius: BorderRadius.circular(22),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 200),
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: _isInputFocused
-                    ? [
-                        const Color(0xFF4488FF).withOpacity(0.4),
-                        const Color(0xFF2255CC).withOpacity(0.2),
-                      ]
-                    : [
-                        Colors.white.withOpacity(0.1),
-                        Colors.transparent,
-                      ],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-              borderRadius: BorderRadius.circular(22),
-              border: Border.all(
-                color: _isInputFocused
-                    ? const Color(0xFF88BBFF).withOpacity(0.3)
-                    : Colors.white.withOpacity(0.1),
-                width: 1,
-              ),
-              boxShadow: _isInputFocused
-                  ? [
-                      BoxShadow(
-                        color: const Color(0xFF4488FF).withOpacity(0.2),
-                        blurRadius: 12,
-                        spreadRadius: 1,
-                      ),
-                    ]
-                  : [],
-            ),
-            child: Icon(
-              Icons.bubble_chart_rounded,
-              color: _isInputFocused
-                  ? Colors.white
-                  : Colors.white.withOpacity(0.5),
-              size: 20,
-            ),
+        child: Center(
+          child: Icon(
+            Icons.bubble_chart_rounded,
+            color: _isInputFocused ? Colors.white : Colors.white.withOpacity(0.5),
+            size: 20,
           ),
         ),
       ),
@@ -625,45 +1010,42 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
   }
 
   Widget _buildRepeatToggle() {
-    return InteractiveGlassWidget(
-      onTap: () {
-        setState(() => _isRepeating = !_isRepeating);
-      },
-      child: ClipRRect(
+    return GlassmorphicContainer(
+      width: 60,
+      height: 36,
+      borderRadius: 16,
+      blur: 10,
+      alignment: Alignment.center,
+      border: 1,
+      linearGradient: LinearGradient(
+        colors: _isRepeating
+            ? [Colors.white.withOpacity(0.25), Colors.white.withOpacity(0.1)]
+            : [Colors.white.withOpacity(0.08), Colors.white.withOpacity(0.02)],
+      ),
+      borderGradient: LinearGradient(
+        colors: [Colors.white.withOpacity(_isRepeating ? 0.6 : 0.2), Colors.white.withOpacity(0.1)],
+      ),
+      child: InkWell(
+        onTap: () => setState(() => _isRepeating = !_isRepeating),
         borderRadius: BorderRadius.circular(16),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 250),
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(16),
-              color: Colors.white.withOpacity(_isRepeating ? 0.15 : 0.03),
-              border: Border.all(
-                color: Colors.white.withOpacity(_isRepeating ? 0.4 : 0.1),
-                width: 1,
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              _isRepeating ? Icons.sync_rounded : Icons.sync_disabled_rounded,
+              size: 16,
+              color: _isRepeating ? Colors.white : Colors.white.withOpacity(0.5),
+            ),
+            const SizedBox(width: 4),
+            Text(
+              '매일',
+              style: TextStyle(
+                color: _isRepeating ? Colors.white : Colors.white.withOpacity(0.5),
+                fontSize: 11,
+                fontWeight: FontWeight.bold,
               ),
             ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  _isRepeating ? Icons.sync_rounded : Icons.sync_disabled_rounded,
-                  size: 16,
-                  color: _isRepeating ? Colors.white : Colors.white.withOpacity(0.5),
-                ),
-                const SizedBox(width: 4),
-                Text(
-                  '매일',
-                  style: TextStyle(
-                    color: _isRepeating ? Colors.white : Colors.white.withOpacity(0.5),
-                    fontSize: 11,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
-            ),
-          ),
+          ],
         ),
       ),
     );
@@ -671,63 +1053,36 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
 
   Widget _buildPriorityButton(int priority) {
     final isSelected = _selectedPriority == priority;
-    // 비눗방울 크기 시각화 (버튼 크기를 살짝 다르게)
-    final size = 24.0 + (4 - priority) * 4.0;
     
-    return InteractiveGlassWidget(
-      onTap: () {
-        setState(() => _selectedPriority = priority);
-      },
-      child: Container(
-        margin: const EdgeInsets.symmetric(horizontal: 8),
-        child: ClipOval(
-          child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 250),
-              width: 36,
-              height: 36,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: Colors.white.withOpacity(isSelected ? 0.15 : 0.03),
-                border: Border.all(
-                  color: Colors.white.withOpacity(isSelected ? 0.4 : 0.1),
-                  width: isSelected ? 1.5 : 1,
-                ),
-                boxShadow: isSelected ? [
-                  BoxShadow(
-                    color: Colors.white.withOpacity(0.1),
-                    blurRadius: 8,
-                    spreadRadius: 1,
-                  )
-                ] : [],
-              ),
-              child: Center(
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 250),
-                  width: size * 0.7,
-                  height: size * 0.7,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    gradient: RadialGradient(
-                      colors: [
-                        Colors.white.withOpacity(isSelected ? 0.8 : 0.1),
-                        Colors.transparent,
-                      ],
-                    ),
-                  ),
-                  child: Center(
-                    child: Text(
-                      '$priority',
-                      style: TextStyle(
-                        color: isSelected ? Colors.black : Colors.white.withOpacity(0.7),
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
+    return GlassmorphicContainer(
+      width: 36,
+      height: 36,
+      borderRadius: 18,
+      blur: 10,
+      alignment: Alignment.center,
+      border: 1.5,
+      linearGradient: LinearGradient(
+        colors: [
+          Colors.white.withOpacity(isSelected ? 0.9 : 0.1),
+          Colors.white.withOpacity(isSelected ? 0.7 : 0.05),
+        ],
+      ),
+      borderGradient: LinearGradient(
+        colors: [
+          Colors.white.withOpacity(isSelected ? 1.0 : 0.3),
+          Colors.white.withOpacity(0.1),
+        ],
+      ),
+      child: InkWell(
+        onTap: () => setState(() => _selectedPriority = priority),
+        borderRadius: BorderRadius.circular(18),
+        child: Center(
+          child: Text(
+            '$priority',
+            style: TextStyle(
+              color: isSelected ? Colors.black : Colors.white.withOpacity(0.6),
+              fontSize: 14,
+              fontWeight: FontWeight.w900,
             ),
           ),
         ),
@@ -739,8 +1094,14 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
 class InteractiveGlassWidget extends StatefulWidget {
   final Widget child;
   final VoidCallback onTap;
+  final VoidCallback? onLongPress;
 
-  const InteractiveGlassWidget({super.key, required this.child, required this.onTap});
+  const InteractiveGlassWidget({
+    super.key, 
+    required this.child, 
+    required this.onTap,
+    this.onLongPress,
+  });
 
   @override
   State<InteractiveGlassWidget> createState() => _InteractiveGlassWidgetState();
@@ -759,6 +1120,12 @@ class _InteractiveGlassWidgetState extends State<InteractiveGlassWidget> {
       onTapUp: (_) {
         setState(() => _isPressed = false);
         widget.onTap();
+      },
+      onLongPress: () {
+        setState(() => _isPressed = false);
+        if (widget.onLongPress != null) {
+          widget.onLongPress!();
+        }
       },
       onTapCancel: () => setState(() => _isPressed = false),
       child: AnimatedScale(
