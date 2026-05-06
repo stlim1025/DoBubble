@@ -190,9 +190,16 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
 
   void _updatePhysics() {
     if (!mounted) return;
+
+    // 하단 입력창 영역 계산 (키보드 높이 포함)
+    final bottomInset = MediaQuery.of(context).viewInsets.bottom;
+    final inputBarHeight = 110.0; // 입력창 대략적 높이
+    final inputBarBottom = bottomInset > 0 ? bottomInset + 16 : 32.0;
+    final bottomLimit = _screenSize.height - inputBarBottom - inputBarHeight;
+
     for (var bubble in _bubbles) {
       if (bubble.state != BubbleState.popping) { // 불기 중에도 이동
-        bubble.update(_screenSize);
+        bubble.update(_screenSize, bottomLimit: bottomLimit);
       }
     }
 
@@ -251,8 +258,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
     HapticFeedback.lightImpact();
 
     final random = Random();
+    final bottomInset = MediaQuery.of(context).viewInsets.bottom;
+    final inputBarBottom = bottomInset > 0 ? bottomInset + 16 : 32.0;
     final startX = _screenSize.width / 2 + (random.nextDouble() - 0.5) * 40;
-    final startY = _screenSize.height - MediaQuery.of(context).viewInsets.bottom - 120;
+    final startY = _screenSize.height - inputBarBottom - 160; // 입력창 위쪽에서 생성
 
     final velocityX = (random.nextDouble() - 0.5) * 1.5;
     final velocityY = -random.nextDouble() * 2.0 - 1.5;

@@ -59,7 +59,7 @@ class TodoBubble {
     return tints[Random().nextInt(tints.length)];
   }
 
-  void update(Size screenSize) {
+  void update(Size screenSize, {double? bottomLimit}) {
     if (state == BubbleState.popping) return;
 
     _time += 1.0;
@@ -95,12 +95,13 @@ class TodoBubble {
       position = Offset(screenSize.width - radius - margin, position.dy);
     }
 
+    final effectiveBottom = bottomLimit ?? screenSize.height;
     if (position.dy - radius < margin) {
       velocity = Offset(velocity.dx, velocity.dy.abs() * 0.6 + 0.4);
       position = Offset(position.dx, radius + margin);
-    } else if (position.dy + radius > screenSize.height - margin) {
+    } else if (position.dy + radius > effectiveBottom - margin) {
       velocity = Offset(velocity.dx, -velocity.dy.abs() * 0.6 - 0.4);
-      position = Offset(position.dx, screenSize.height - radius - margin);
+      position = Offset(position.dx, effectiveBottom - radius - margin);
     }
   }
 
