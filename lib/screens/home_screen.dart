@@ -41,6 +41,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
 
   bool _isInputFocused = false;
   String? _morphingBubbleId; // 현재 팝업으로 변환 중인 비눗방울 ID
+  DateTime? _lastPhysicsTime; // 물리 연산 프레임 제한용
 
   // 날짜 헬퍼
   DateTime get _todayDate => DateTime(_today.year, _today.month, _today.day);
@@ -256,25 +257,36 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
   void _updatePhysics() {
     if (!mounted) return;
 
+    // 프레임 레이트 제한 (최대 60fps 정도) - 발열 및 배터리 절약
+    final now = DateTime.now();
+    if (_lastPhysicsTime != null) {
+      if (now.difference(_lastPhysicsTime!).inMilliseconds < 16) return;
+    }
+    _lastPhysicsTime = now;
+
     // 하단 입력창 영역 계산 (키보드 높이 포함)
     final bottomInset = MediaQuery.of(context).viewInsets.bottom;
     final inputBarHeight = 110.0; // 입력창 대략적 높이
     final inputBarBottom = bottomInset > 0 ? bottomInset + 16 : 32.0;
     final bottomLimit = _screenSize.height - inputBarBottom - inputBarHeight;
+    final topLimit = MediaQuery.of(context).padding.top + 70.0;
 
-    for (var bubble in _bubbles) {
+    // 1. 위치 업데이트 및 활성 버블 수집 (리스트 생성 최소화)
+    for (int i = 0; i < _bubbles.length; i++) {
+      final bubble = _bubbles[i];
       if (bubble.state != BubbleState.popping && bubble.state != BubbleState.popped) { 
-        bubble.update(_screenSize, bottomLimit: bottomLimit);
+        bubble.update(_screenSize, bottomLimit: bottomLimit, topLimit: topLimit);
       }
     }
 
-    // 버블 간 충돌 감지 (탄성 충돌) - 활성 버블끼리만
-    final activeBubbles = _bubbles.where((b) => b.state != BubbleState.popping && b.state != BubbleState.popped).toList();
-    for (int i = 0; i < activeBubbles.length; i++) {
-      for (int j = i + 1; j < activeBubbles.length; j++) {
-        final a = activeBubbles[i];
-        final b = activeBubbles[j];
-        if (a.state == BubbleState.popping || b.state == BubbleState.popping) continue;
+    // 2. 버블 간 충돌 감지 (탄성 충돌) - 인덱스로 직접 접근하여 리스트 생성 회피
+    for (int i = 0; i < _bubbles.length; i++) {
+      final a = _bubbles[i];
+      if (a.state == BubbleState.popping || a.state == BubbleState.popped) continue;
+
+      for (int j = i + 1; j < _bubbles.length; j++) {
+        final b = _bubbles[j];
+        if (b.state == BubbleState.popping || b.state == BubbleState.popped) continue;
 
         final dx = b.position.dx - a.position.dx;
         final dy = b.position.dy - a.position.dy;
@@ -296,26 +308,22 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
           final dvy = a.velocity.dy - b.velocity.dy;
           final dot = dvx * nx + dvy * ny;
 
-          // 서로 가까워지는 경우만 처리 (이미 멀어지는 경우 무시)
+          // 서로 가까워지는 경우만 처리
           if (dot > 0) {
-            const restitution = 0.75; // 반발 계수 (0=완전비탄성, 1=완전탄성)
+            const restitution = 0.75;
             final impulse = dot * restitution;
             a.velocity = Offset(a.velocity.dx - impulse * nx, a.velocity.dy - impulse * ny);
             b.velocity = Offset(b.velocity.dx + impulse * nx, b.velocity.dy + impulse * ny);
 
             // 충돌 후 속도 상한 재적용
-            for (final bubble in [a, b]) {
-              final spd = bubble.velocity.distance;
-              if (spd > 1.5) {
-                bubble.velocity = bubble.velocity / spd * 1.5;
-              }
-            }
+            final spdA = a.velocity.distance;
+            if (spdA > 1.5) a.velocity = a.velocity / spdA * 1.5;
+            final spdB = b.velocity.distance;
+            if (spdB > 1.5) b.velocity = b.velocity / spdB * 1.5;
           }
         }
       }
     }
-
-    // setState() 호출 제거 -> AnimatedBuilder가 처리하도록 변경
   }
 
   void _addTodo(String task) {
@@ -426,7 +434,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
 
         // 다이얼로그 크기 충분히 확보 (오버플로우 방지)
         const dialogWidth = 320.0;
-        const dialogHeight = 330.0; // 310 -> 330 (픽셀 오버플로우 방지 및 여유 공간 확보)
+        const dialogHeight = 280.0; // 높이 축소 (하단 빈 공간 제거)
         // _screenSize를 직접 사용하여 HomeScreen의 좌표계와 일치시킴
         final targetPos = Offset(_screenSize.width / 2, _screenSize.height / 2);
 
@@ -573,15 +581,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
                   _saveBubbles();
                   _cleanupFutureRepeatingTasks(taskToDelete); // 미래 데이터 정리
                   Navigator.pop(context);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: const Text('이제 더 이상 반복되지 않아요.'),
-                      backgroundColor: Colors.black87,
-                      behavior: SnackBarBehavior.floating,
-                      margin: const EdgeInsets.all(20),
-                      duration: const Duration(seconds: 1),
-                    ),
-                  );
+                  _showGlassNotification('이제 더 이상 반복되지 않아요.');
                 },
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.redAccent.withOpacity(0.8),
@@ -736,11 +736,40 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
             ),
 
             // ── 우측 하단 카운트 칩 ──
-            if (_bubbles.isNotEmpty)
+            if (_bubbles.any((b) => b.state != BubbleState.popped && b.state != BubbleState.popping))
               Positioned(
-                top: MediaQuery.of(context).padding.top + 70,
+                top: MediaQuery.of(context).padding.top + 72,
                 right: 20,
-                child: _buildGlassChip('🫧 ${_bubbles.length}', width: 80),
+                child: GlassmorphicContainer(
+                  width: 68,
+                  height: 34,
+                  borderRadius: 17,
+                  blur: 15,
+                  alignment: Alignment.center,
+                  border: 0.8,
+                  linearGradient: LinearGradient(
+                    colors: [Colors.white.withOpacity(0.18), Colors.white.withOpacity(0.08)],
+                  ),
+                  borderGradient: LinearGradient(
+                    colors: [Colors.white.withOpacity(0.4), Colors.white.withOpacity(0.1)],
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Icon(Icons.bubble_chart_rounded, color: Colors.white, size: 16),
+                      const SizedBox(width: 6),
+                      Text(
+                        '${_bubbles.where((b) => b.state != BubbleState.popped && b.state != BubbleState.popping).length}',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 15,
+                          fontWeight: FontWeight.bold,
+                          fontFamily: 'Pretendard',
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ),
 
             // ── 하단 입력창 ──
@@ -771,45 +800,98 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
     );
   }
 
-  void _goToHistory(BuildContext context) {
-    _saveBubbles();
-    Navigator.push(
+  void _goToHistory(BuildContext context) async {
+    await _saveBubbles();
+    if (!mounted) return;
+
+    // 이동 전에 데이터를 미리 로드하여 애니메이션 중에도 리스트가 보이게 함
+    final historyData = await _getHistoryData();
+    if (!mounted) return;
+    
+    FocusScope.of(context).unfocus(); // 이동 전 키보드 닫기
+    await Navigator.push(
       context,
       PageRouteBuilder(
-        transitionDuration: const Duration(milliseconds: 600),
-        reverseTransitionDuration: const Duration(milliseconds: 500),
-        pageBuilder: (context, animation, secondaryAnimation) => const HistoryScreen(),
+        transitionDuration: const Duration(milliseconds: 450),
+        reverseTransitionDuration: const Duration(milliseconds: 400),
+        pageBuilder: (context, animation, secondaryAnimation) => HistoryScreen(initialData: historyData),
         transitionsBuilder: (context, animation, secondaryAnimation, child) {
-          final curve = CurvedAnimation(parent: animation, curve: Curves.easeInOutExpo);
+          // Hero가 주연이므로 나머지는 부드러운 페이드만 적용
           return FadeTransition(
-            opacity: curve,
-            child: ScaleTransition(
-              scale: Tween<double>(begin: 0.8, end: 1.0).animate(curve),
-              child: child,
-            ),
+            opacity: animation,
+            child: child,
           );
         },
       ),
     );
+    
+    // 기록 화면에서 돌아왔을 때
+    if (mounted) {
+      FocusScope.of(context).unfocus(); // 복귀 시에도 포커스 해제하여 키보드 팝업 방지
+      _loadBubbles();
+    }
+  }
+
+  Future<Map<String, List<TodoBubble>>> _getHistoryData() async {
+    final prefs = await SharedPreferences.getInstance();
+    final Map<String, List<TodoBubble>> historyData = {};
+    
+    final now = DateTime.now();
+    final todayKey = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+    
+    final keys = prefs.getKeys().where((k) => k.startsWith('bubbles_')).map((k) => k.replaceFirst('bubbles_', '')).toList();
+    if (!keys.contains(todayKey)) keys.add(todayKey);
+    keys.sort((a, b) => b.compareTo(a));
+
+    for (var date in keys) {
+      final jsonStr = prefs.getString('bubbles_$date');
+      List<TodoBubble> bubbles = [];
+      if (jsonStr != null) {
+        try {
+          final List<dynamic> decoded = jsonDecode(jsonStr);
+          bubbles = decoded.map((item) => TodoBubble.fromJson(item)).toList();
+          bubbles.sort((a, b) {
+            final aPopped = a.state == BubbleState.popped ? 0 : 1;
+            final bPopped = b.state == BubbleState.popped ? 0 : 1;
+            return aPopped.compareTo(bPopped);
+          });
+        } catch (_) {}
+      }
+      if (date.compareTo(todayKey) > 0 && bubbles.isEmpty) continue;
+      historyData[date] = bubbles;
+    }
+    return historyData;
   }
 
   Widget _buildNavButton(IconData icon, VoidCallback onTap, {VoidCallback? onLongPress}) {
-    return Hero(
-      tag: icon == Icons.list_alt_rounded ? 'history_icon' : 'nav_${icon.codePoint}',
-      child: InteractiveGlassWidget(
-        onTap: onTap,
-        onLongPress: onLongPress,
-        child: Container(
-          width: 40,
-          height: 40,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: Colors.white.withOpacity(0.1),
-            border: Border.all(color: Colors.white.withOpacity(0.2)),
-          ),
-          child: Icon(icon, color: Colors.white.withOpacity(0.8)),
-        ),
+    final bool isHistoryIcon = icon == Icons.list_alt_rounded;
+    
+    Widget button = Container(
+      width: 40,
+      height: 40,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: Colors.white.withOpacity(0.1),
+        border: Border.all(color: Colors.white.withOpacity(0.2)),
       ),
+      child: Icon(icon, color: Colors.white.withOpacity(0.8)),
+    );
+
+    // 기록 아이콘인 경우 Hero 태그 부여
+    if (isHistoryIcon) {
+      button = Hero(
+        tag: 'history_transition',
+        child: Material(
+          color: Colors.transparent,
+          child: button,
+        ),
+      );
+    }
+
+    return InteractiveGlassWidget(
+      onTap: onTap,
+      onLongPress: onLongPress,
+      child: button,
     );
   }
 
@@ -894,7 +976,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
 
     return GlassmorphicContainer(
       width: _screenSize.width - 40,
-      height: isKeyboardOpen ? 80 : 120, // 70 -> 80 (오버플로우 방지)
+      height: 120, 
       borderRadius: 28,
       blur: 20,
       alignment: Alignment.center,
@@ -925,13 +1007,13 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
               // 중요도/반복 옵션 바 애니메이션 개선
               AnimatedOpacity(
                 duration: const Duration(milliseconds: 300),
-                opacity: isKeyboardOpen ? 0.0 : 1.0,
+                opacity: 1.0,
                 child: IgnorePointer(
-                  ignoring: isKeyboardOpen,
+                  ignoring: false,
                   child: AnimatedContainer(
                     duration: const Duration(milliseconds: 350),
                     curve: Curves.fastOutSlowIn,
-                    height: isKeyboardOpen ? 0 : 52,
+                    height: 52,
                     child: ClipRect(
                       child: OverflowBox(
                         minHeight: 52,
@@ -1079,7 +1161,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
   }
 
   Widget _buildPriorityButton(int priority) {
-    final isSelected = _selectedPriority == priority;
+    final bool selected = _selectedPriority == priority;
+    final Color priorityColor = TodoBubble.getPriorityColor(priority);
     
     return GlassmorphicContainer(
       width: 36,
@@ -1087,18 +1170,16 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
       borderRadius: 18,
       blur: 10,
       alignment: Alignment.center,
-      border: 1.5,
+      border: selected ? 2.0 : 1.0,
       linearGradient: LinearGradient(
-        colors: [
-          Colors.white.withOpacity(isSelected ? 0.9 : 0.1),
-          Colors.white.withOpacity(isSelected ? 0.7 : 0.05),
-        ],
+        colors: selected
+            ? [priorityColor.withOpacity(0.4), priorityColor.withOpacity(0.1)]
+            : [Colors.white.withOpacity(0.08), Colors.white.withOpacity(0.04)],
       ),
       borderGradient: LinearGradient(
-        colors: [
-          Colors.white.withOpacity(isSelected ? 1.0 : 0.3),
-          Colors.white.withOpacity(0.1),
-        ],
+        colors: selected
+            ? [priorityColor.withOpacity(0.8), priorityColor.withOpacity(0.3)]
+            : [Colors.white.withOpacity(0.2), Colors.white.withOpacity(0.05)],
       ),
       child: InkWell(
         onTap: () => setState(() => _selectedPriority = priority),
@@ -1107,9 +1188,124 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
           child: Text(
             '$priority',
             style: TextStyle(
-              color: isSelected ? Colors.black : Colors.white.withOpacity(0.6),
+              color: selected ? Colors.white : Colors.white.withOpacity(0.4),
               fontSize: 14,
-              fontWeight: FontWeight.w900,
+              fontWeight: selected ? FontWeight.bold : FontWeight.normal,
+              shadows: selected ? [
+                Shadow(
+                  color: priorityColor.withOpacity(0.8),
+                  blurRadius: 8,
+                ),
+              ] : null,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showGlassNotification(String message) {
+    if (!mounted) return;
+    HapticFeedback.lightImpact();
+    final overlay = Overlay.of(context);
+    late OverlayEntry entry;
+    
+    entry = OverlayEntry(
+      builder: (context) => _GlassNotification(
+        message: message,
+        onComplete: () {
+          if (entry.mounted) entry.remove();
+        },
+      ),
+    );
+
+    overlay.insert(entry);
+    Future.delayed(const Duration(milliseconds: 2500), () {
+      if (entry.mounted) entry.remove();
+    });
+  }
+}
+
+class _GlassNotification extends StatefulWidget {
+  final String message;
+  final VoidCallback onComplete;
+
+  const _GlassNotification({required this.message, required this.onComplete});
+
+  @override
+  State<_GlassNotification> createState() => _GlassNotificationState();
+}
+
+class _GlassNotificationState extends State<_GlassNotification> with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  late Animation<double> _opacity;
+  late Animation<Offset> _offset;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 600),
+    );
+    _opacity = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(parent: _controller, curve: const Interval(0.0, 0.4, curve: Curves.easeOut)),
+    );
+    _offset = Tween<Offset>(begin: const Offset(0, 0.3), end: Offset.zero).animate(
+      CurvedAnimation(parent: _controller, curve: Curves.easeOutBack),
+    );
+    _controller.forward();
+    
+    Future.delayed(const Duration(milliseconds: 1800), () {
+      if (mounted) _controller.reverse();
+    });
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Positioned(
+      bottom: 120,
+      left: 40,
+      right: 40,
+      child: FadeTransition(
+        opacity: _opacity,
+        child: SlideTransition(
+          position: _offset,
+          child: Material(
+            color: Colors.transparent,
+            child: GlassmorphicContainer(
+              width: double.infinity,
+              height: 52,
+              borderRadius: 26,
+              blur: 20,
+              alignment: Alignment.center,
+              border: 1,
+              linearGradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [Colors.white.withOpacity(0.2), Colors.white.withOpacity(0.05)],
+              ),
+              borderGradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [Colors.white.withOpacity(0.4), Colors.white.withOpacity(0.1)],
+              ),
+              child: Text(
+                widget.message,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  fontFamily: 'Pretendard',
+                  letterSpacing: -0.2,
+                ),
+              ),
             ),
           ),
         ),

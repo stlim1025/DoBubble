@@ -1,0 +1,40 @@
+  Widget _buildPriorityButton(int priority) {
+    final isSelected = _selectedPriority == priority;
+    final color = TodoBubble.getPriorityColor(priority);
+    
+    return GlassmorphicContainer(
+      width: 36,
+      height: 36,
+      borderRadius: 18,
+      blur: 10,
+      alignment: Alignment.center,
+      border: isSelected ? 2.0 : 1.0,
+      linearGradient: LinearGradient(
+        colors: isSelected
+            ? [color.withOpacity(0.4), color.withOpacity(0.1)]
+            : [Colors.white.withOpacity(0.08), Colors.white.withOpacity(0.04)],
+      ),
+      borderGradient: LinearGradient(
+        colors: isSelected
+            ? [color.withOpacity(0.8), color.withOpacity(0.3)]
+            : [Colors.white.withOpacity(0.2), Colors.white.withOpacity(0.05)],
+      ),
+      child: InkWell(
+        onTap: () => setState(() => _selectedPriority = priority),
+        borderRadius: BorderRadius.circular(18),
+        child: Center(
+          child: Text(
+            '$priority',
+            style: TextStyle(
+              color: isSelected ? Colors.white : Colors.white.withOpacity(0.4),
+              fontSize: 14,
+              fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+              shadows: isSelected ? [
+                Shadow(color: color.withOpacity(0.8), blurRadius: 8),
+              ] : null,
+            ),
+          ),
+        ),
+      ),
+    );
+  }

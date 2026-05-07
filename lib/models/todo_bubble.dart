@@ -24,7 +24,7 @@ class TodoBubble {
   // 글라스모피즘 색상 (버블마다 살짝 다른 색조)
   final Color tintColor;
   final int priority; // 1 (가장 중요) ~ 4
-  final bool isRepeating;
+  bool isRepeating;
   final DateTime? repeatStartDate; // 반복 시작 날짜
   final DateTime createdAt;
 
@@ -48,20 +48,22 @@ class TodoBubble {
         _phaseX = Random().nextDouble() * pi * 2,
         _phaseY = Random().nextDouble() * pi * 2,
         _driftSpeed = 0.0,
-        tintColor = tintColor ?? _randomTint();
+        tintColor = tintColor ?? getPriorityColor(priority);
 
-  static Color _randomTint() {
-    final tints = [
-      const Color(0xFF88CCFF), // 청록
-      const Color(0xFFAABBFF), // 라벤더
-      const Color(0xFF99EEFF), // 민트
-      const Color(0xFFCCBBFF), // 퍼플
-      const Color(0xFF88DDCC), // 에메랄드
-    ];
-    return tints[Random().nextInt(tints.length)];
+  static Color getPriorityColor(int priority) {
+    switch (priority) {
+      case 1:
+        return const Color(0xFFFF00E5); // Neon Pink
+      case 2:
+        return const Color(0xFF00FF00); // Strong Lime
+      case 3:
+        return const Color(0xFFFFEA00); // Pure Yellow
+      default:
+        return const Color(0xFF88CCFF);
+    }
   }
 
-  void update(Size screenSize, {double? bottomLimit}) {
+  void update(Size screenSize, {double? bottomLimit, double? topLimit}) {
     if (state == BubbleState.popping) return;
 
     _time += 1.0;
@@ -97,10 +99,12 @@ class TodoBubble {
       position = Offset(screenSize.width - radius - margin, position.dy);
     }
 
+    final effectiveTop = topLimit ?? margin;
     final effectiveBottom = bottomLimit ?? screenSize.height;
-    if (position.dy - radius < margin) {
+    
+    if (position.dy - radius < effectiveTop) {
       velocity = Offset(velocity.dx, velocity.dy.abs() * 0.6 + 0.4);
-      position = Offset(position.dx, radius + margin);
+      position = Offset(position.dx, radius + effectiveTop);
     } else if (position.dy + radius > effectiveBottom - margin) {
       velocity = Offset(velocity.dx, -velocity.dy.abs() * 0.6 - 0.4);
       position = Offset(position.dx, effectiveBottom - radius - margin);

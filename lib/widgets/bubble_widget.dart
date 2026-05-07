@@ -31,13 +31,10 @@ class _BubbleWidgetState extends State<BubbleWidget>
 
   late AnimationController _popController;
 
-  // 미묘한 shimmer 애니메이션 (이제 외부에서 주입받음)
-
   @override
   void initState() {
     super.initState();
 
-    // 불기 애니메이션 (후- 불어넣는 느낌, 빠르고 탄성있게)
     _blowController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 800),
@@ -46,13 +43,10 @@ class _BubbleWidgetState extends State<BubbleWidget>
       CurvedAnimation(parent: _blowController, curve: Curves.easeOutBack),
     );
 
-    // 터지기 애니메이션 - 매우 짧고 즉각적
     _popController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 350),
     );
-
-    // shimmer 루프 제거 (HomeScreen에서 관리)
 
     if (widget.bubble.state == BubbleState.blowing) {
       _blowController.forward().then((_) {
@@ -105,18 +99,15 @@ class _BubbleWidgetState extends State<BubbleWidget>
         builder: (context, child) {
           double currentScale = _blowAnimation.value;
 
-          // 둥둥 떠있는 느낌의 위아래 부유 효과
           final phaseOffset = widget.bubble.id.hashCode % 1000 / 1000.0;
           final floatingOffset = math.sin((widget.shimmerController.value + phaseOffset) * math.pi * 2) * 4.0;
 
           final isPopping = widget.bubble.state == BubbleState.popping;
           final popProgress = _popController.value;
 
-          // 터질 때: 본체가 순간적으로 줄어들면서 사라짐 (0~15% 구간에서 완료)
           double bodyOpacity = 1.0;
           double bodyScale = currentScale;
           if (isPopping) {
-            // 초반 15%에서 본체가 빠르게 쪼그라들며 사라짐
             final bodyPhase = (popProgress / 0.15).clamp(0.0, 1.0);
             bodyScale = currentScale * (1.0 - Curves.easeInBack.transform(bodyPhase) * 0.6);
             bodyOpacity = 1.0 - Curves.easeIn.transform(bodyPhase);
@@ -125,13 +116,12 @@ class _BubbleWidgetState extends State<BubbleWidget>
           return Transform.translate(
             offset: Offset(0, floatingOffset),
             child: SizedBox(
-              width: widget.bubble.radius * 2.5,  // 파티클 공간 확보
+              width: widget.bubble.radius * 2.5,
               height: widget.bubble.radius * 2.5,
               child: Stack(
                 alignment: Alignment.center,
                 clipBehavior: Clip.none,
                 children: [
-                  // 1. 버블 본체 - 즉시 사라짐
                   if (bodyOpacity > 0.01)
                     AnimatedScale(
                       scale: _isPressed ? 1.08 : 1.0,
@@ -146,19 +136,15 @@ class _BubbleWidgetState extends State<BubbleWidget>
                       ),
                     ),
 
-                  // 2. 터질 때 충격파 링 (shockwave ring)
                   if (isPopping)
                     ..._buildShockwave(),
 
-                  // 3. 터질 때 막 파편 (membrane fragments)
                   if (isPopping)
                     ..._buildMembraneFragments(widget.bubble.tintColor),
 
-                  // 4. 물방울 파티클
                   if (isPopping)
                     ..._buildWaterDroplets(widget.bubble.tintColor),
 
-                  // 5. 터지는 순간 섬광
                   if (isPopping && popProgress < 0.3)
                     _buildFlash(),
                 ],
@@ -178,135 +164,92 @@ class _BubbleWidgetState extends State<BubbleWidget>
     return SizedBox(
       width: r * 2,
       height: r * 2,
-      child: ClipOval(
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-          child: Stack(
-            alignment: Alignment.center,
-            children: [
-              // ── 1. 메인 구체 (볼륨감을 위한 3D 그라데이션 및 날카로운 테두리) ──
-              Container(
-                width: r * 2,
-                height: r * 2,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: Colors.transparent,
-                  border: Border.all(
-                    color: Colors.white.withOpacity(0.4), // 더 선명하고 얇은 테두리
-                    width: 0.5,
-                  ),
-                  gradient: RadialGradient(
-                    center: const Alignment(-0.3, -0.3), // 입체감을 위한 광원 오프셋
-                    radius: 1.0,
-                    colors: [
-                      Colors.white.withOpacity(0.12), // 내부의 은은한 볼륨감
-                      Colors.white.withOpacity(0.02),
-                      Colors.white.withOpacity(0.2), // 가장자리 반사광
-                    ],
-                    stops: const [0.0, 0.6, 1.0],
-                  ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.white.withOpacity(0.08),
-                      blurRadius: 20,
-                      spreadRadius: 1,
-                    ),
-                  ],
-                ),
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          // ── 후면 광원 (Soft Glow) ──
+          Container(
+            width: r * 2.4,
+            height: r * 2.4,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              gradient: RadialGradient(
+                colors: [
+                  tint.withOpacity(0.35),
+                  tint.withOpacity(0.15),
+                  Colors.transparent,
+                ],
+                stops: const [0.0, 0.5, 1.0],
               ),
-
-              // ── 2. 우측 하단 오묘한 반사광 (거의 투명하게) ──
-              Container(
-                width: r * 2,
-                height: r * 2,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  gradient: RadialGradient(
-                    center: const Alignment(0.6, 0.6),
-                    radius: 0.8,
-                    colors: [
-                      const Color(0xFFDDA0DD).withOpacity(0.15 + shimmerVal * 0.05),
-                      const Color(0xFF88FFCC).withOpacity(0.05),
-                      Colors.transparent,
-                    ],
-                    stops: const [0.0, 0.5, 1.0],
-                  ),
-                ),
-              ),
-
-              // ── 3. 좌측 상단 강한 하이라이트 (Specular) - 유리의 광택 느낌 ──
-              Container(
-                width: r * 2,
-                height: r * 2,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  gradient: RadialGradient(
-                    center: const Alignment(-0.6, -0.6),
-                    radius: 0.6,
-                    colors: [
-                      Colors.white.withOpacity(0.8), // 작지만 아주 강한 빛
-                      Colors.white.withOpacity(0.1),
-                      Colors.transparent,
-                    ],
-                    stops: const [0.0, 0.3, 1.0],
-                  ),
-                ),
-              ),
-
-              // ── 텍스트 ──
-              Padding(
-                padding: const EdgeInsets.all(14.0),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (widget.bubble.isRepeating)
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 2),
-                        child: Icon(
-                          Icons.sync_rounded,
-                          size: 10,
-                          color: Colors.white.withOpacity(0.8),
-                        ),
-                      ),
-                    Text(
-                      widget.bubble.task,
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w700,
-                        fontSize: math.max(11, r * 0.22),
-                        letterSpacing: 0.3,
-                        height: 1.3,
-                        shadows: [
-                          Shadow(
-                            color: Colors.black.withOpacity(0.5),
-                            blurRadius: 4,
-                          ),
-                          Shadow(
-                            color: tint.withOpacity(0.6),
-                            blurRadius: 10,
-                          ),
-                        ],
-                      ),
-                      maxLines: widget.bubble.isRepeating ? 2 : 3,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ],
-                ),
-              ),
-            ],
+            ),
           ),
-        ),
+
+          // ── 비눗방울 이미지 (Assets) ──
+          Opacity(
+            opacity: 0.85, 
+            child: ClipOval(
+              child: Image.asset(
+                'assets/images/Bubble.png',
+                width: r * 2,
+                height: r * 2,
+                fit: BoxFit.contain,
+                color: tint.withOpacity(0.20),
+                colorBlendMode: BlendMode.srcATop,
+              ),
+            ),
+          ),
+
+          // ── 텍스트 ──
+          Padding(
+            padding: const EdgeInsets.all(14.0),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (widget.bubble.isRepeating)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 2),
+                    child: Icon(
+                      Icons.sync_rounded,
+                      size: 10,
+                      color: Colors.white.withOpacity(0.8),
+                    ),
+                  ),
+                Text(
+                  widget.bubble.task,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.9),
+                    fontWeight: FontWeight.w500,
+                    fontFamily: 'Pretendard',
+                    fontSize: math.max(11, r * 0.22),
+                    letterSpacing: 0.3,
+                    height: 1.3,
+                    shadows: [
+                      Shadow(
+                        color: Colors.black.withOpacity(0.4),
+                        blurRadius: 4,
+                      ),
+                      Shadow(
+                        color: tint.withOpacity(0.2),
+                        blurRadius: 8,
+                      ),
+                    ],
+                  ),
+                  maxLines: widget.bubble.isRepeating ? 2 : 3,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
 
-  // ── 충격파 링: 버블 외곽선이 바깥으로 팽창하며 퍼지는 효과 ──
   List<Widget> _buildShockwave() {
     final progress = _popController.value;
     final r = widget.bubble.radius;
 
-    // 두 개의 링이 시간차로 퍼져나감
     return List.generate(2, (i) {
       final delay = i * 0.08;
       final ringProgress = ((progress - delay) / (1.0 - delay)).clamp(0.0, 1.0);
@@ -335,38 +278,27 @@ class _BubbleWidgetState extends State<BubbleWidget>
     });
   }
 
-  // ── 막 파편: 비눗방울 표면 조각이 바깥으로 날아가는 효과 ──
   List<Widget> _buildMembraneFragments(Color tint) {
     final progress = _popController.value;
     final r = widget.bubble.radius;
 
     return List.generate(12, (index) {
       final random = math.Random(index * 17 + widget.bubble.id.hashCode);
-
-      // 비눗방울 표면(가장자리)에서 시작
       final angle = (index / 12) * math.pi * 2 + random.nextDouble() * 0.5;
       final speedFactor = 0.6 + random.nextDouble() * 0.8;
-
-      // 바깥으로 빠르게 날아감
       final burstPhase = Curves.easeOutQuart.transform(progress);
       final distance = r * 0.9 + burstPhase * r * 1.5 * speedFactor;
-
       final dx = math.cos(angle) * distance;
       var dy = math.sin(angle) * distance;
-      // 중력으로 아래로 처짐
       dy += Curves.easeInQuad.transform(progress) * 80;
 
-      // 파편 크기: 호 모양으로 표현 (작은 곡선 조각)
       final fragWidth = 3.0 + random.nextDouble() * 6.0;
       final fragHeight = 1.5 + random.nextDouble() * 2.5;
       final rotation = angle + burstPhase * (random.nextDouble() - 0.5) * 4;
-
-      // 투명도: 빠르게 사라짐
       final opacity = (1.0 - progress * 1.5).clamp(0.0, 0.9);
 
       if (opacity < 0.01) return const SizedBox.shrink();
 
-      // 비눗방울 막 특유의 무지개 색상
       final rainbowColors = [
         Colors.white,
         const Color(0xFFFF88DD),
@@ -410,28 +342,20 @@ class _BubbleWidgetState extends State<BubbleWidget>
     });
   }
 
-  // ── 물방울 파티클: 터진 후 잔여 물방울이 퍼지며 떨어짐 ──
   List<Widget> _buildWaterDroplets(Color tint) {
     final progress = _popController.value;
     final r = widget.bubble.radius;
 
     return List.generate(16, (index) {
       final random = math.Random(index * 31 + widget.bubble.id.hashCode);
-
       final angle = random.nextDouble() * math.pi * 2;
       final speedFactor = 0.3 + random.nextDouble() * 1.0;
       final size = 1.5 + random.nextDouble() * 3.5;
-
-      // 시작은 약간 지연 (막 파편 후에 물방울이 나옴)
       final delayedProgress = ((progress - 0.05) / 0.95).clamp(0.0, 1.0);
-
-      // 바깥으로 퍼지며
       final burstDist = r * 0.5 + Curves.easeOutQuart.transform(delayedProgress) * 50 * speedFactor;
       final dx = math.cos(angle) * burstDist;
-      // 중력의 영향을 많이 받음 (물방울이 아래로 쏟아짐)
       var dy = math.sin(angle) * burstDist;
       dy += Curves.easeInCubic.transform(delayedProgress) * 120;
-
       final opacity = (1.0 - delayedProgress * 1.3).clamp(0.0, 1.0);
 
       if (opacity < 0.01) return const SizedBox.shrink();
@@ -469,7 +393,6 @@ class _BubbleWidgetState extends State<BubbleWidget>
     });
   }
 
-  // ── 터지는 순간 섬광 ──
   Widget _buildFlash() {
     final progress = _popController.value;
     final flashPhase = (progress / 0.15).clamp(0.0, 1.0);
