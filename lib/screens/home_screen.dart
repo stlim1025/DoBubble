@@ -42,6 +42,15 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
   bool _isInputFocused = false;
   String? _morphingBubbleId; // 현재 팝업으로 변환 중인 비눗방울 ID
   DateTime? _lastPhysicsTime; // 물리 연산 프레임 제한용
+  
+  // PageView 관련
+  late PageController _pageController;
+  static const int _initialPage = 10000;
+  int _currentPage = _initialPage;
+  final Map<String, List<TodoBubble>> _bubblesByDate = {}; // 날짜별 버블 데이터 캐시
+  bool _isCalendarOpen = false; // 달력 확장 여부
+  late AnimationController _calendarController;
+  late Animation<double> _calendarAnimation;
 
   // 날짜 헬퍼
   DateTime get _todayDate => DateTime(_today.year, _today.month, _today.day);
@@ -66,6 +75,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _pageController = PageController(initialPage: _initialPage);
     _today = DateTime.now();
     _selectedDate = _today;
     _loadBubbles();
@@ -93,6 +103,16 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
         _isInputFocused = _focusNode.hasFocus;
       });
     });
+
+    _calendarController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 500),
+    );
+    _calendarAnimation = CurvedAnimation(
+      parent: _calendarController,
+      curve: Curves.easeOutBack,
+      reverseCurve: Curves.easeInBack,
+    );
   }
 
   @override
@@ -106,6 +126,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
     _taskController.dispose();
     _focusNode.dispose();
     _audioPlayer.dispose();
+    _calendarController.dispose();
     super.dispose();
   }
 
@@ -130,17 +151,27 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
   }
 
   void _navigateDate(int direction) async {
-    // 이동 전 현재 날짜의 데이터 확실히 저장
     await _saveBubbles();
-    
+    _pageController.animateToPage(
+      _currentPage + direction,
+      duration: const Duration(milliseconds: 600),
+      curve: Curves.easeOutQuart,
+    );
+  }
+
+  void _onPageChanged(int page) async {
+    await _saveBubbles();
+    final diff = page - _initialPage;
     setState(() {
-      _bubbles = []; // 화면 즉시 비우기 (로딩 느낌 및 잔상 방지)
-      _selectedDate = DateTime(
-        _selectedDate.year, _selectedDate.month, _selectedDate.day + direction,
-      );
+      _currentPage = page;
+      _selectedDate = DateTime(_today.year, _today.month, _today.day + diff);
+      // _bubbles는 현재 선택된 날짜의 버블들을 가리킴 (기존 로직 호환성 유지)
+      _bubbles = _bubblesByDate[_dateKey(_selectedDate)] ?? [];
     });
     
-    _loadBubblesForDate(_selectedDate);
+    if (!_bubblesByDate.containsKey(_dateKey(_selectedDate))) {
+      _loadBubblesForDate(_selectedDate);
+    }
   }
 
   @override
@@ -236,8 +267,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
     }
 
     setState(() {
-      _bubbles.clear();
-      _bubbles.addAll(loadedBubbles);
+      final key = _dateKey(date);
+      _bubblesByDate[key] = loadedBubbles;
+      if (key == _dateKey(_selectedDate)) {
+        _bubbles = loadedBubbles;
+      }
     });
   }
 
@@ -271,59 +305,57 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
     final bottomLimit = _screenSize.height - inputBarBottom - inputBarHeight;
     final topLimit = MediaQuery.of(context).padding.top + 70.0;
 
-    // 1. 위치 업데이트 및 활성 버블 수집 (리스트 생성 최소화)
-    for (int i = 0; i < _bubbles.length; i++) {
-      final bubble = _bubbles[i];
-      if (bubble.state != BubbleState.popping && bubble.state != BubbleState.popped) { 
-        bubble.update(_screenSize, bottomLimit: bottomLimit, topLimit: topLimit);
+    // 현재 활성화된 페이지와 그 인접 페이지의 버블들 업데이트
+    _bubblesByDate.forEach((key, bubbles) {
+      for (int i = 0; i < bubbles.length; i++) {
+        final bubble = bubbles[i];
+        if (bubble.state != BubbleState.popping && bubble.state != BubbleState.popped) { 
+          bubble.update(_screenSize, bottomLimit: bottomLimit, topLimit: topLimit);
+        }
       }
-    }
+      
+      // 버블 간 충돌 감지
+      for (int i = 0; i < bubbles.length; i++) {
+        final a = bubbles[i];
+        if (a.state == BubbleState.popping || a.state == BubbleState.popped) continue;
 
-    // 2. 버블 간 충돌 감지 (탄성 충돌) - 인덱스로 직접 접근하여 리스트 생성 회피
-    for (int i = 0; i < _bubbles.length; i++) {
-      final a = _bubbles[i];
-      if (a.state == BubbleState.popping || a.state == BubbleState.popped) continue;
+        for (int j = i + 1; j < bubbles.length; j++) {
+          final b = bubbles[j];
+          if (b.state == BubbleState.popping || b.state == BubbleState.popped) continue;
 
-      for (int j = i + 1; j < _bubbles.length; j++) {
-        final b = _bubbles[j];
-        if (b.state == BubbleState.popping || b.state == BubbleState.popped) continue;
+          final dx = b.position.dx - a.position.dx;
+          final dy = b.position.dy - a.position.dy;
+          final distSq = dx * dx + dy * dy;
+          final minDist = a.radius + b.radius;
 
-        final dx = b.position.dx - a.position.dx;
-        final dy = b.position.dy - a.position.dy;
-        final distSq = dx * dx + dy * dy;
-        final minDist = a.radius + b.radius;
+          if (distSq < minDist * minDist && distSq > 0) {
+            final dist = sqrt(distSq);
+            final nx = dx / dist;
+            final ny = dy / dist;
 
-        if (distSq < minDist * minDist && distSq > 0) {
-          final dist = sqrt(distSq);
-          final nx = dx / dist; // 충돌 법선 벡터
-          final ny = dy / dist;
+            final overlap = (minDist - dist) / 2.0;
+            a.position = Offset(a.position.dx - nx * overlap, a.position.dy - ny * overlap);
+            b.position = Offset(b.position.dx + nx * overlap, b.position.dy + ny * overlap);
 
-          // 겹침 보정 (두 버블을 서로 밀어냄)
-          final overlap = (minDist - dist) / 2.0;
-          a.position = Offset(a.position.dx - nx * overlap, a.position.dy - ny * overlap);
-          b.position = Offset(b.position.dx + nx * overlap, b.position.dy + ny * overlap);
+            final dvx = a.velocity.dx - b.velocity.dx;
+            final dvy = a.velocity.dy - b.velocity.dy;
+            final dot = dvx * nx + dvy * ny;
 
-          // 충돌 방향의 상대 속도 계산
-          final dvx = a.velocity.dx - b.velocity.dx;
-          final dvy = a.velocity.dy - b.velocity.dy;
-          final dot = dvx * nx + dvy * ny;
+            if (dot > 0) {
+              const restitution = 0.75;
+              final impulse = dot * restitution;
+              a.velocity = Offset(a.velocity.dx - impulse * nx, a.velocity.dy - impulse * ny);
+              b.velocity = Offset(b.velocity.dx + impulse * nx, b.velocity.dy + impulse * ny);
 
-          // 서로 가까워지는 경우만 처리
-          if (dot > 0) {
-            const restitution = 0.75;
-            final impulse = dot * restitution;
-            a.velocity = Offset(a.velocity.dx - impulse * nx, a.velocity.dy - impulse * ny);
-            b.velocity = Offset(b.velocity.dx + impulse * nx, b.velocity.dy + impulse * ny);
-
-            // 충돌 후 속도 상한 재적용
-            final spdA = a.velocity.distance;
-            if (spdA > 1.5) a.velocity = a.velocity / spdA * 1.5;
-            final spdB = b.velocity.distance;
-            if (spdB > 1.5) b.velocity = b.velocity / spdB * 1.5;
+              final spdA = a.velocity.distance;
+              if (spdA > 1.5) a.velocity = a.velocity / spdA * 1.5;
+              final spdB = b.velocity.distance;
+              if (spdB > 1.5) b.velocity = b.velocity / spdB * 1.5;
+            }
           }
         }
       }
-    }
+    });
   }
 
   void _addTodo(String task) {
@@ -376,7 +408,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
 
   void _popBubble(TodoBubble bubble) async {
     final isKeyboardOpen = MediaQuery.of(context).viewInsets.bottom > 0;
-    if (_isViewingPast || isKeyboardOpen) return; // 과거 날짜거나 키보드가 열려있으면 터뜨릴 수 없음
+    if (isKeyboardOpen) return; // 키보드가 열려있으면 터뜨릴 수 없음
 
     HapticFeedback.mediumImpact();
 
@@ -607,24 +639,18 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
 
     return Scaffold(
       resizeToAvoidBottomInset: false,
-      body: GestureDetector(
-        onHorizontalDragEnd: (details) {
-          if (details.primaryVelocity! > 500) {
-            // Swipe Right -> 이전 날
-            _navigateDate(-1);
-            HapticFeedback.mediumImpact();
-          } else if (details.primaryVelocity! < -500) {
-            // Swipe Left -> 다음 날
-            _navigateDate(1);
-            HapticFeedback.mediumImpact();
-          }
-        },
-        child: Stack(
-          children: [
+      body: Stack(
+        children: [
             // ── 배경 및 빈 공간 터치 처리 ──
             Positioned.fill(
               child: GestureDetector(
-                onTap: () => FocusScope.of(context).unfocus(),
+                onTap: () {
+                  FocusScope.of(context).unfocus();
+                  if (_isCalendarOpen) {
+                    _showCalendarDialog(); // 애니메이션과 함께 닫기
+                  }
+                },
+
                 behavior: HitTestBehavior.opaque,
                 child: AnimatedBuilder(
                   animation: _bgAnim,
@@ -666,80 +692,162 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
               ),
             ),
 
-            // ── 비눗방울들 ──
+            // ── 비눗방울들 (PageView) ──
             IgnorePointer(
-              ignoring: bottomInset > 0, // 키보드가 열려있으면 비눗방울 조작 불가
-              child: AnimatedBuilder(
-                animation: _gameLoopController,
-                builder: (context, _) {
-                return Stack(
-                  children: _bubbles
-                      .where((b) => b.state != BubbleState.popped && b.id != _morphingBubbleId)
-                      .map((bubble) {
-                    return Positioned(
-                      left: bubble.position.dx - bubble.radius,
-                      top: bubble.position.dy - bubble.radius,
-                      child: BubbleWidget(
-                        key: ValueKey(bubble.id),
-                        bubble: bubble,
-                        shimmerController: _shimmerController,
-                        onPop: () => _popBubble(bubble),
-                        onLongPress: bubble.isRepeating ? (pos) => _toggleRepeat(bubble, pos) : null,
-                        isReadOnly: _isViewingPast,
-                      ),
-                    );
-                  }).toList(),
-                );
-              },
-            ),
-          ),
+              ignoring: bottomInset > 0,
+              child: PageView.builder(
+                controller: _pageController,
+                onPageChanged: _onPageChanged,
+                physics: const BouncingScrollPhysics(),
+                itemBuilder: (context, index) {
+                  final diff = index - _initialPage;
+                  final date = DateTime(_today.year, _today.month, _today.day + diff);
+                  final dateKey = _dateKey(date);
+                  
+                  // 해당 날짜의 버블 데이터가 없으면 로드 시도
+                  if (!_bubblesByDate.containsKey(dateKey)) {
+                    _loadBubblesForDate(date);
+                    return const SizedBox.shrink();
+                  }
 
-            // ── 상단 정보 바 ──
-            SafeArea(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    // 이전날 버튼
-                    _buildNavButton(Icons.chevron_left_rounded, () => _navigateDate(-1)),
-                    
-                    // 오늘 날짜 칩 및 기록 버튼 (중첩)
-                    Expanded(
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          _buildNavButton(Icons.list_alt_rounded, () {
-                            // 일반 탭 시 기본 이동
-                            _goToHistory(context);
-                          }, onLongPress: () {
-                            // 꾹 눌렀을 때도 동일하게 이동 (요청 사항)
-                            _goToHistory(context);
-                            HapticFeedback.heavyImpact();
-                          }),
-                          const SizedBox(width: 12),
-                          _buildGlassDateChip(_dateDisplayText, () {
-                            if (!_isViewingToday) {
-                              setState(() => _selectedDate = _today);
-                              _loadBubbles();
-                            }
-                          }),
-                        ],
-                      ),
-                    ),
+                  final bubbles = _bubblesByDate[dateKey]!;
+                  final isCurrentPage = index == _currentPage;
 
-                    // 다음날 버튼
-                    _buildNavButton(Icons.chevron_right_rounded, () => _navigateDate(1)),
-                  ],
-                ),
+                  return AnimatedBuilder(
+                    animation: _pageController,
+                    builder: (context, child) {
+                      double value = 1.0;
+                      if (_pageController.position.haveDimensions) {
+                        value = _pageController.page! - index;
+                        value = (1 - (value.abs() * 0.3)).clamp(0.0, 1.0);
+                      }
+
+                      return Transform.scale(
+                        scale: value,
+                        child: Opacity(
+                          opacity: value,
+                          child: AnimatedBuilder(
+                            animation: _gameLoopController,
+                            builder: (context, _) {
+                              return Stack(
+                                children: bubbles
+                                    .where((b) => b.state != BubbleState.popped && b.id != _morphingBubbleId)
+                                    .map((bubble) {
+                                  return Positioned(
+                                    left: bubble.position.dx - bubble.radius,
+                                    top: bubble.position.dy - bubble.radius,
+                                    child: BubbleWidget(
+                                      key: ValueKey(bubble.id),
+                                      bubble: bubble,
+                                      shimmerController: _shimmerController,
+                                      onPop: () => _popBubble(bubble),
+                                      onLongPress: bubble.isRepeating ? (pos) => _toggleRepeat(bubble, pos) : null,
+                                      isReadOnly: false, // 이제 과거 날짜도 터뜨릴 수 있음
+                                    ),
+                                  );
+                                }).toList(),
+                              );
+                            },
+                          ),
+                        ),
+                      );
+                    },
+                  );
+                },
               ),
             ),
 
-            // ── 우측 하단 카운트 칩 ──
+            // ── 상단 정보 바 ──
+            SafeArea(
+              child: Column(
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        // 이전날 버튼
+                        _buildNavButton(Icons.chevron_left_rounded, () => _navigateDate(-1)),
+                        
+                        // 오늘 날짜 칩 및 기록 버튼 (중첩)
+                        Expanded(
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              _buildNavButton(Icons.list_alt_rounded, () {
+                                // 일반 탭 시 기본 이동
+                                _goToHistory(context);
+                              }, onLongPress: () {
+                                // 꾹 눌렀을 때도 동일하게 이동 (요청 사항)
+                                _goToHistory(context);
+                                HapticFeedback.heavyImpact();
+                              }),
+                              const SizedBox(width: 12),
+                              _buildGlassDateChip(_dateDisplayText, () {
+                                _showCalendarDialog();
+                              }),
+                            ],
+                          ),
+                        ),
+
+                        // 다음날 버튼
+                        _buildNavButton(Icons.chevron_right_rounded, () => _navigateDate(1)),
+                      ],
+                    ),
+                  ),
+                  
+                  // 인라인 달력 (날짜로부터 쭈욱 늘어나는 모핑 애니메이션)
+                  AnimatedBuilder(
+                    animation: _calendarAnimation,
+                    builder: (context, child) {
+                      if (_calendarController.value == 0) return const SizedBox.shrink();
+                      
+                      final controllerValue = _calendarController.value;
+                      final curveValue = _calendarAnimation.value;
+                      
+                      final screenWidth = MediaQuery.of(context).size.width;
+                      final targetWidth = screenWidth - 40;
+                      final startWidth = 200.0; // Date Chip 너비
+                      
+                      final targetHeight = 380.0;
+                      final startHeight = 44.0; // Date Chip 높이
+                      
+                      final currentWidth = lerpDouble(startWidth, targetWidth, curveValue)!;
+                      final currentHeight = lerpDouble(startHeight, targetHeight, curveValue)!;
+                      final currentRadius = lerpDouble(25, 28, curveValue)!;
+
+                      return Opacity(
+                        opacity: controllerValue.clamp(0.0, 1.0),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          child: _GlassCalendar(
+                            initialDate: _selectedDate,
+                            today: _today,
+                            onDateSelected: _onCalendarDateSelected,
+                            width: currentWidth,
+                            height: currentHeight,
+                            borderRadius: currentRadius,
+                            animationValue: controllerValue,
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ],
+              ),
+            ),
+
+            // ── 우측 하단 카운트 칩 (달력 열릴 때 위치 조정) ──
             if (_bubbles.any((b) => b.state != BubbleState.popped && b.state != BubbleState.popping))
-              Positioned(
-                top: MediaQuery.of(context).padding.top + 72,
-                right: 20,
+              AnimatedBuilder(
+                animation: _calendarAnimation,
+                builder: (context, child) {
+                  return Positioned(
+                    top: MediaQuery.of(context).padding.top + 72 + (_calendarAnimation.value * 390),
+                    right: 20,
+                    child: child!,
+                  );
+                },
                 child: GlassmorphicContainer(
                   width: 68,
                   height: 34,
@@ -791,45 +899,83 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
                 left: 0,
                 right: 0,
                 child: Center(
-                  child: _buildGlassChip('과거 기록은 터뜨릴 수 없어요 🔒', width: 220),
+                  child: _buildGlassChip('과거 기록도 터뜨릴 수 있어요! ✨', width: 220),
                 ),
               ),
           ],
         ),
-      ),
     );
+  }
+
+  void _showCalendarDialog() {
+    setState(() {
+      _isCalendarOpen = !_isCalendarOpen;
+      if (_isCalendarOpen) {
+        _calendarController.forward();
+      } else {
+        _calendarController.reverse();
+      }
+    });
+    HapticFeedback.selectionClick();
+  }
+
+  void _onCalendarDateSelected(DateTime date) {
+    setState(() {
+      _isCalendarOpen = false;
+      _calendarController.reverse();
+      _selectedDate = date;
+    });
+    
+    final diff = DateTime(date.year, date.month, date.day)
+        .difference(DateTime(_today.year, _today.month, _today.day))
+        .inDays;
+    
+    _pageController.animateToPage(
+      _initialPage + diff,
+      duration: const Duration(milliseconds: 600),
+      curve: Curves.easeOutQuart,
+    );
+    
+    HapticFeedback.mediumImpact();
   }
 
   void _goToHistory(BuildContext context) async {
     await _saveBubbles();
     if (!mounted) return;
 
-    // 이동 전에 데이터를 미리 로드하여 애니메이션 중에도 리스트가 보이게 함
+    // 이동 전에 데이터를 미리 로드하여 애니메이션 중에도 리스트가 바로 보이게 함
     final historyData = await _getHistoryData();
     if (!mounted) return;
-    
-    FocusScope.of(context).unfocus(); // 이동 전 키보드 닫기
-    await Navigator.push(
+
+    Navigator.push(
       context,
       PageRouteBuilder(
-        transitionDuration: const Duration(milliseconds: 450),
-        reverseTransitionDuration: const Duration(milliseconds: 400),
         pageBuilder: (context, animation, secondaryAnimation) => HistoryScreen(initialData: historyData),
         transitionsBuilder: (context, animation, secondaryAnimation, child) {
-          // Hero가 주연이므로 나머지는 부드러운 페이드만 적용
+          const begin = Offset(0.0, 0.12); // 살짝 아래에서 위로
+          const end = Offset.zero;
+          const curve = Curves.easeOutQuart;
+
+          var tween = Tween(begin: begin, end: end).chain(CurveTween(curve: curve));
+          var offsetAnimation = animation.drive(tween);
+
           return FadeTransition(
             opacity: animation,
-            child: child,
+            child: SlideTransition(
+              position: offsetAnimation,
+              child: child,
+            ),
           );
         },
+        transitionDuration: const Duration(milliseconds: 750),
       ),
-    );
-    
-    // 기록 화면에서 돌아왔을 때
-    if (mounted) {
-      FocusScope.of(context).unfocus(); // 복귀 시에도 포커스 해제하여 키보드 팝업 방지
-      _loadBubbles();
-    }
+    ).then((_) {
+      if (mounted) {
+        FocusScope.of(context).unfocus();
+        _bubblesByDate.clear();
+        _loadBubbles();
+      }
+    });
   }
 
   Future<Map<String, List<TodoBubble>>> _getHistoryData() async {
@@ -1310,6 +1456,234 @@ class _GlassNotificationState extends State<_GlassNotification> with SingleTicke
           ),
         ),
       ),
+    );
+  }
+}
+
+class _GlassCalendar extends StatefulWidget {
+  final DateTime initialDate;
+  final DateTime today;
+  final Function(DateTime) onDateSelected;
+
+  final double width;
+  final double height;
+  final double borderRadius;
+  final double animationValue;
+
+  const _GlassCalendar({
+    required this.initialDate,
+    required this.today,
+    required this.onDateSelected,
+    required this.width,
+    required this.height,
+    required this.borderRadius,
+    required this.animationValue,
+  });
+
+  @override
+  State<_GlassCalendar> createState() => _GlassCalendarState();
+}
+
+class _GlassCalendarState extends State<_GlassCalendar> {
+  late DateTime _viewMonth;
+  late PageController _monthPageController;
+  final int _initialMonthPage = 1200;
+
+  @override
+  void initState() {
+    super.initState();
+    _viewMonth = DateTime(widget.initialDate.year, widget.initialDate.month);
+    _monthPageController = PageController(initialPage: _initialMonthPage);
+  }
+
+  @override
+  void dispose() {
+    _monthPageController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onHorizontalDragEnd: (details) {
+        if (details.primaryVelocity == null) return;
+        if (details.primaryVelocity! > 200) {
+          // 오른쪽 스와이프 -> 이전 달
+          setState(() => _viewMonth = DateTime(_viewMonth.year, _viewMonth.month - 1));
+          HapticFeedback.lightImpact();
+        } else if (details.primaryVelocity! < -200) {
+          // 왼쪽 스와이프 -> 다음 달
+          setState(() => _viewMonth = DateTime(_viewMonth.year, _viewMonth.month + 1));
+          HapticFeedback.lightImpact();
+        }
+      },
+      child: GlassmorphicContainer(
+        width: widget.width,
+        height: widget.height,
+        borderRadius: widget.borderRadius,
+        blur: 20 * widget.animationValue.clamp(0.0, 1.0),
+        alignment: Alignment.center,
+        border: 1,
+        linearGradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Colors.white.withOpacity(0.12), Colors.white.withOpacity(0.04)],
+        ),
+        borderGradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Colors.white.withOpacity(0.4), Colors.white.withOpacity(0.1)],
+        ),
+        child: Material(
+          color: Colors.transparent,
+          child: SingleChildScrollView(
+            physics: const NeverScrollableScrollPhysics(),
+            child: SizedBox(
+              height: 380, 
+              width: widget.width,
+              child: OverflowBox(
+                minWidth: 350, 
+                maxWidth: 350,
+                minHeight: 380,
+                maxHeight: 380,
+                alignment: Alignment.topCenter,
+                child: Opacity(
+                  opacity: ((widget.animationValue * 380 - 100) / 280).clamp(0.0, 1.0),
+                  child: Column(
+                    children: [
+                      _buildHeader(_viewMonth), // 상단 헤더는 고정
+                      _buildWeekdays(),         // 요일 표시도 고정
+                      Expanded(
+                        child: PageView.builder(
+                          controller: _monthPageController,
+                          onPageChanged: (index) {
+                            final diff = index - _initialMonthPage;
+                            setState(() {
+                              _viewMonth = DateTime(widget.initialDate.year, widget.initialDate.month + diff);
+                            });
+                            HapticFeedback.selectionClick();
+                          },
+                          itemBuilder: (context, index) {
+                            final diff = index - _initialMonthPage;
+                            final month = DateTime(widget.initialDate.year, widget.initialDate.month + diff);
+                            return _buildDaysGrid(month);
+                          },
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHeader(DateTime month) {
+    return Padding(
+      padding: const EdgeInsets.all(20),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          _buildNavBtn(Icons.chevron_left_rounded, () {
+            _monthPageController.previousPage(
+              duration: const Duration(milliseconds: 300),
+              curve: Curves.easeInOut,
+            );
+          }),
+          Text(
+            '${month.year}년 ${month.month}월',
+            style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+          ),
+          _buildNavBtn(Icons.chevron_right_rounded, () {
+            _monthPageController.nextPage(
+              duration: const Duration(milliseconds: 300),
+              curve: Curves.easeInOut,
+            );
+          }),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildNavBtn(IconData icon, VoidCallback onTap) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        padding: const EdgeInsets.all(8),
+        decoration: BoxDecoration(
+          color: Colors.white.withOpacity(0.1),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Icon(icon, color: Colors.white, size: 20),
+      ),
+    );
+  }
+
+  Widget _buildWeekdays() {
+    const days = ['월', '화', '수', '목', '금', '토', '일'];
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceAround,
+        children: days.map((d) => SizedBox(
+          width: 30,
+          child: Center(
+            child: Text(d, style: TextStyle(color: Colors.white.withOpacity(0.4), fontSize: 12, fontWeight: FontWeight.bold)),
+          ),
+        )).toList(),
+      ),
+    );
+  }
+
+  Widget _buildDaysGrid(DateTime month) {
+    final daysInMonth = DateTime(month.year, month.month + 1, 0).day;
+    final firstDay = DateTime(month.year, month.month, 1).weekday - 1;
+    final totalCells = firstDay + daysInMonth;
+    
+    return GridView.builder(
+      padding: const EdgeInsets.symmetric(horizontal: 20),
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 7,
+        mainAxisSpacing: 8,
+        crossAxisSpacing: 8,
+      ),
+      itemCount: totalCells,
+      itemBuilder: (context, index) {
+        if (index < firstDay) return const SizedBox.shrink();
+        
+        final day = index - firstDay + 1;
+        final date = DateTime(month.year, month.month, day);
+        final isToday = date.year == widget.today.year && date.month == widget.today.month && date.day == widget.today.day;
+        final isSelected = date.year == widget.initialDate.year && date.month == widget.initialDate.month && date.day == widget.initialDate.day;
+
+        return InkWell(
+          onTap: () => widget.onDateSelected(date),
+          borderRadius: BorderRadius.circular(12),
+          child: Container(
+            decoration: BoxDecoration(
+              color: isSelected ? Colors.white.withOpacity(0.2) : (isToday ? Colors.blueAccent.withOpacity(0.2) : Colors.transparent),
+              borderRadius: BorderRadius.circular(12),
+              border: isSelected ? Border.all(color: Colors.white.withOpacity(0.5)) : (isToday ? Border.all(color: Colors.blueAccent.withOpacity(0.5)) : null),
+            ),
+            child: Center(
+              child: Text(
+                '$day',
+                style: TextStyle(
+                  color: isSelected ? Colors.white : (isToday ? Colors.blueAccent : Colors.white.withOpacity(0.8)),
+                  fontWeight: isSelected || isToday ? FontWeight.bold : FontWeight.normal,
+                ),
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 }

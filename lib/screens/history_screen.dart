@@ -19,15 +19,61 @@ class _HistoryScreenState extends State<HistoryScreen> {
   bool _isLoading = true;
   final GlobalKey _todayKey = GlobalKey();
   String? _todayKeyStr;
+  final ScrollController _scrollController = ScrollController();
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
 
   @override
   void initState() {
     super.initState();
+    final now = DateTime.now();
+    _todayKeyStr = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+    
     if (widget.initialData != null) {
       _historyData.addAll(widget.initialData!);
       _isLoading = false;
+      // 초기 데이터가 있으면 즉시 스크롤 시도 (모핑/전환 효과와 동기화)
+      _scrollToToday();
+    } else {
+      _loadHistory();
     }
-    _loadHistory();
+  }
+
+  void _scrollToToday() {
+    if (!mounted) return;
+    
+    // 1. 레이아웃 준비 즉시 시작 (전환 애니메이션과 동기화)
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        // 충분히 긴 시간 동안 부드럽게 이동 (선형에 가까운 곡선 사용)
+        _performScroll(duration: const Duration(milliseconds: 1500), curve: Curves.easeOutCubic);
+      }
+    });
+
+    // 2. 전환 애니메이션이 딱 끝나는 시점(750ms)에 '즉시(Duration.zero)' 위치를 한 번 더 고정
+    // 이미 1번 스크롤이 진행 중이거나 거의 도착한 상태이므로, 
+    // 여기서 즉시 고정해버리면 시스템에 의한 '맨 위로 튕김' 현상을 원천 차단할 수 있습니다.
+    Future.delayed(const Duration(milliseconds: 750), () {
+      if (mounted) {
+        _performScroll(duration: Duration.zero);
+      }
+    });
+  }
+
+  void _performScroll({required Duration duration, Curve curve = Curves.easeOutQuart}) {
+    if (!mounted) return;
+    if (_todayKey.currentContext != null) {
+      Scrollable.ensureVisible(
+        _todayKey.currentContext!,
+        duration: duration,
+        curve: curve,
+        alignment: 0.0,
+      );
+    }
   }
 
   Future<void> _loadHistory() async {
@@ -60,11 +106,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
 
     if (mounted) {
       setState(() => _isLoading = false);
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (_todayKey.currentContext != null) {
-          Scrollable.ensureVisible(_todayKey.currentContext!, duration: const Duration(milliseconds: 500), curve: Curves.easeInOut);
-        }
-      });
+      _scrollToToday();
     }
   }
 
@@ -313,6 +355,8 @@ class _HistoryScreenState extends State<HistoryScreen> {
 
   Widget _buildHistoryList() {
     return ListView.builder(
+      controller: _scrollController,
+      key: const PageStorageKey('history_list'),
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
       itemCount: _historyData.length,
       itemBuilder: (context, index) {

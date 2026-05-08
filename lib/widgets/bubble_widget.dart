@@ -169,13 +169,13 @@ class _BubbleWidgetState extends State<BubbleWidget>
         children: [
           // ── 후면 광원 (Soft Glow) ──
           Container(
-            width: r * 2.4,
-            height: r * 2.4,
+            width: r * 2.0,
+            height: r * 2.0,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
               gradient: RadialGradient(
                 colors: [
-                  tint.withOpacity(0.35),
+                  tint.withOpacity(0.3),
                   tint.withOpacity(0.15),
                   Colors.transparent,
                 ],
@@ -185,15 +185,15 @@ class _BubbleWidgetState extends State<BubbleWidget>
           ),
 
           // ── 비눗방울 이미지 (Assets) ──
-          Opacity(
-            opacity: 0.85, 
-            child: ClipOval(
+          ClipOval(
+            child: Opacity(
+              opacity: 0.9,
               child: Image.asset(
                 'assets/images/Bubble.png',
                 width: r * 2,
                 height: r * 2,
                 fit: BoxFit.contain,
-                color: tint.withOpacity(0.20),
+                color: tint.withOpacity(0.1),
                 colorBlendMode: BlendMode.srcATop,
               ),
             ),
