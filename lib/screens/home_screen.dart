@@ -293,7 +293,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
 
     final now = DateTime.now();
     if (_lastPhysicsTime != null) {
-      if (now.difference(_lastPhysicsTime!).inMilliseconds < 16) return;
+      // 프레임 레이트 제한 (최대 30fps) - 발열 방지를 위해 더 완화
+      if (now.difference(_lastPhysicsTime!).inMilliseconds < 30) return;
     }
     _lastPhysicsTime = now;
 
@@ -662,42 +663,32 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
 
                 behavior: HitTestBehavior.opaque,
                 child: RepaintBoundary(
-                  child: AnimatedBuilder(
-                    animation: _bgAnim,
-                    builder: (context, child) {
-                      return Stack(
-                        children: [
-                          Container(
-                            decoration: BoxDecoration(
-                              gradient: LinearGradient(
-                                begin: Alignment.topLeft,
-                                end: Alignment.bottomRight,
-                                colors: [
-                                  Color.lerp(const Color(0xFF0F172A), const Color(0xFF1E1B4B), _bgAnim.value)!,
-                                  Color.lerp(const Color(0xFF1E1B4B), const Color(0xFF0B1120), _bgAnim.value)!,
-                                ],
-                              ),
-                            ),
+                  child: Stack(
+                    children: [
+                      Container(
+                        decoration: const BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                            colors: [
+                              Color(0xFF0F172A),
+                              Color(0xFF0B1120),
+                            ],
                           ),
-                          // Animated glowing orbs
-                          Positioned(
-                            top: 100 + 50 * sin(_bgAnim.value * pi),
-                            left: -100,
-                            child: _buildGlowOrb(const Color(0xFF4488FF), 400, 0.6),
-                          ),
-                          Positioned(
-                            bottom: -150,
-                            right: -100 + 50 * cos(_bgAnim.value * pi),
-                            child: _buildGlowOrb(const Color(0xFF88CCFF), 500, 0.4),
-                          ),
-                          Positioned(
-                            top: MediaQuery.of(context).size.height * 0.4,
-                            right: -50,
-                            child: _buildGlowOrb(const Color(0xFF6366F1), 300, 0.5),
-                          ),
-                        ],
-                      );
-                    },
+                        ),
+                      ),
+                      // 정적인 광원 (연산량 감소)
+                      Positioned(
+                        top: 100,
+                        left: -100,
+                        child: _buildGlowOrb(const Color(0xFF4488FF), 400, 0.4),
+                      ),
+                      Positioned(
+                        bottom: -150,
+                        right: -100,
+                        child: _buildGlowOrb(const Color(0xFF88CCFF), 500, 0.3),
+                      ),
+                    ],
                   ),
                 ),
               ),

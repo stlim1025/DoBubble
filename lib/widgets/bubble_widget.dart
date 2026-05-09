@@ -79,8 +79,12 @@ class _BubbleWidgetState extends State<BubbleWidget>
 
   bool _isPressed = false;
 
+  Widget? _cachedBody;
+
   @override
   Widget build(BuildContext context) {
+    _cachedBody ??= RepaintBoundary(child: _buildGlassBubbleBody());
+
     return GestureDetector(
       onTapDown: (_) {
         if (!widget.isReadOnly) HapticFeedback.selectionClick();
@@ -97,7 +101,7 @@ class _BubbleWidgetState extends State<BubbleWidget>
       onLongPress: widget.onLongPress != null ? () => widget.onLongPress!(widget.bubble.position) : null,
       child: AnimatedBuilder(
         animation: Listenable.merge([_blowController, _popController, widget.shimmerController]),
-        child: RepaintBoundary(child: _buildGlassBubbleBody()), // 정적 본체 캐싱
+        child: _cachedBody, // 정적 본체 완전 캐싱
         builder: (context, staticBody) {
           double currentScale = _blowAnimation.value;
 
@@ -129,7 +133,7 @@ class _BubbleWidgetState extends State<BubbleWidget>
                       scale: bodyScale * (_isPressed ? 1.08 : 1.0),
                       child: Opacity(
                         opacity: bodyOpacity,
-                        child: staticBody, // 캐싱된 본체 사용
+                        child: staticBody,
                       ),
                     ),
 
@@ -285,9 +289,9 @@ class _BubbleWidgetState extends State<BubbleWidget>
     final progress = _popController.value;
     final r = widget.bubble.radius;
 
-    return List.generate(24, (index) {
+    return List.generate(12, (index) {
       final random = math.Random(index * 17 + widget.bubble.id.hashCode);
-      final angle = (index / 24) * math.pi * 2 + random.nextDouble() * 0.5;
+      final angle = (index / 12) * math.pi * 2 + random.nextDouble() * 0.5;
       final speedFactor = 0.6 + random.nextDouble() * 1.4;
       final burstPhase = Curves.easeOutQuart.transform(progress);
       final distance = r * 0.9 + burstPhase * r * 2.5 * speedFactor;
@@ -350,7 +354,7 @@ class _BubbleWidgetState extends State<BubbleWidget>
     final progress = _popController.value;
     final r = widget.bubble.radius;
 
-    return List.generate(32, (index) {
+    return List.generate(12, (index) {
       final random = math.Random(index * 31 + widget.bubble.id.hashCode);
       final angle = random.nextDouble() * math.pi * 2;
       final speedFactor = 0.4 + random.nextDouble() * 1.4;
