@@ -5,16 +5,16 @@ import 'screens/home_screen.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp();
-  runApp(const DoBubbleApp());
+  runApp(const DoPopApp());
 }
 
-class DoBubbleApp extends StatelessWidget {
-  const DoBubbleApp({super.key});
+class DoPopApp extends StatelessWidget {
+  const DoPopApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'DoBubble',
+      title: 'DoPop',
       theme: ThemeData(
         brightness: Brightness.dark,
         scaffoldBackgroundColor: const Color(0xFF0A0E1A),

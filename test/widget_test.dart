@@ -8,12 +8,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:dobubble/main.dart';
+import 'package:dopop/main.dart';
 
 void main() {
   testWidgets('App smoke test', (WidgetTester tester) async {
     // Build our app and trigger a frame.
-    await tester.pumpWidget(const DoBubbleApp());
+    await tester.pumpWidget(const DoPopApp());
 
     // Verify that the add button is present
     expect(find.byIcon(Icons.add), findsOneWidget);
