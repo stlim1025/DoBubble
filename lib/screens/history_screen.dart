@@ -293,7 +293,10 @@ class _HistoryScreenState extends State<HistoryScreen> {
                 top: MediaQuery.of(context).padding.top + 10,
                 right: 20,
                 child: _GlassPressButton(
-                  onTap: () => Navigator.pop(context),
+                  onTap: () {
+                    FocusManager.instance.primaryFocus?.unfocus();
+                    Navigator.pop(context);
+                  },
                   child: GlassmorphicContainer(
                     width: 44,
                     height: 44,

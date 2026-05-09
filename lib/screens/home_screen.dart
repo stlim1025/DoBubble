@@ -300,7 +300,12 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
     final bottomInset = MediaQuery.of(context).viewInsets.bottom;
     const inputBarHeight = 110.0;
     final inputBarBottom = bottomInset > 0 ? bottomInset + 16 : 32.0;
-    final bottomLimit = _screenSize.height - inputBarBottom - inputBarHeight;
+    
+    // 키보드가 올라와 있을 때는 하단 충돌 제한을 해제하여 비눗방울이 갇히지 않게 함
+    final bottomLimit = bottomInset > 0 
+        ? _screenSize.height + 100 
+        : _screenSize.height - inputBarBottom - inputBarHeight;
+    
     final topLimit = MediaQuery.of(context).padding.top + 70.0;
 
     // 최적화: 모든 날짜가 아닌 현재 보이고 있는 페이지와 양옆 페이지의 버블만 연산
@@ -946,6 +951,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
   }
 
   void _goToHistory(BuildContext context) async {
+    _focusNode.unfocus(); // 이동 전 키보드 해제
     await _saveBubbles();
     if (!mounted) return;
 
