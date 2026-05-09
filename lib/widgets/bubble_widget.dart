@@ -89,6 +89,7 @@ class _BubbleWidgetState extends State<BubbleWidget>
       onTapUp: (_) {
         setState(() => _isPressed = false);
         if (widget.bubble.state == BubbleState.floating && !widget.isReadOnly) {
+          HapticFeedback.mediumImpact();
           widget.onPop();
         }
       },
@@ -96,7 +97,8 @@ class _BubbleWidgetState extends State<BubbleWidget>
       onLongPress: widget.onLongPress != null ? () => widget.onLongPress!(widget.bubble.position) : null,
       child: AnimatedBuilder(
         animation: Listenable.merge([_blowController, _popController, widget.shimmerController]),
-        builder: (context, child) {
+        child: RepaintBoundary(child: _buildGlassBubbleBody()), // 정적 본체 캐싱
+        builder: (context, staticBody) {
           double currentScale = _blowAnimation.value;
 
           final phaseOffset = widget.bubble.id.hashCode % 1000 / 1000.0;
@@ -123,16 +125,11 @@ class _BubbleWidgetState extends State<BubbleWidget>
                 clipBehavior: Clip.none,
                 children: [
                   if (bodyOpacity > 0.01)
-                    AnimatedScale(
-                      scale: _isPressed ? 1.08 : 1.0,
-                      duration: const Duration(milliseconds: 150),
-                      curve: Curves.easeOutBack,
-                      child: Transform.scale(
-                        scale: bodyScale,
-                        child: Opacity(
-                          opacity: bodyOpacity,
-                          child: _buildGlassBubbleBody(),
-                        ),
+                    Transform.scale(
+                      scale: bodyScale * (_isPressed ? 1.08 : 1.0),
+                      child: Opacity(
+                        opacity: bodyOpacity,
+                        child: staticBody, // 캐싱된 본체 사용
                       ),
                     ),
 
@@ -187,7 +184,7 @@ class _BubbleWidgetState extends State<BubbleWidget>
           // ── 비눗방울 이미지 (Assets) ──
           ClipOval(
             child: Opacity(
-              opacity: 0.9,
+              opacity: 1.0,
               child: Image.asset(
                 'assets/images/Bubble.png',
                 width: r * 2,
@@ -219,12 +216,18 @@ class _BubbleWidgetState extends State<BubbleWidget>
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     color: Colors.white.withOpacity(0.9),
-                    fontWeight: FontWeight.w500,
-                    fontFamily: 'Pretendard',
+                    fontWeight: FontWeight.w800,
+                    fontFamily: 'NanumSquareRound',
                     fontSize: math.max(11, r * 0.22),
                     letterSpacing: 0.3,
                     height: 1.3,
                     shadows: [
+                      // 폰트 두께 보강용 미세 그림자 (Stroke 효과)
+                      Shadow(offset: const Offset(-0.4, -0.4), color: Colors.white.withOpacity(0.3)),
+                      Shadow(offset: const Offset(0.4, -0.4), color: Colors.white.withOpacity(0.3)),
+                      Shadow(offset: const Offset(0.4, 0.4), color: Colors.white.withOpacity(0.3)),
+                      Shadow(offset: const Offset(-0.4, 0.4), color: Colors.white.withOpacity(0.3)),
+                      
                       Shadow(
                         color: Colors.black.withOpacity(0.4),
                         blurRadius: 4,
@@ -282,29 +285,30 @@ class _BubbleWidgetState extends State<BubbleWidget>
     final progress = _popController.value;
     final r = widget.bubble.radius;
 
-    return List.generate(12, (index) {
+    return List.generate(24, (index) {
       final random = math.Random(index * 17 + widget.bubble.id.hashCode);
-      final angle = (index / 12) * math.pi * 2 + random.nextDouble() * 0.5;
-      final speedFactor = 0.6 + random.nextDouble() * 0.8;
+      final angle = (index / 24) * math.pi * 2 + random.nextDouble() * 0.5;
+      final speedFactor = 0.6 + random.nextDouble() * 1.4;
       final burstPhase = Curves.easeOutQuart.transform(progress);
-      final distance = r * 0.9 + burstPhase * r * 1.5 * speedFactor;
+      final distance = r * 0.9 + burstPhase * r * 2.5 * speedFactor;
       final dx = math.cos(angle) * distance;
       var dy = math.sin(angle) * distance;
-      dy += Curves.easeInQuad.transform(progress) * 80;
+      dy += Curves.easeInQuad.transform(progress) * 100;
 
-      final fragWidth = 3.0 + random.nextDouble() * 6.0;
-      final fragHeight = 1.5 + random.nextDouble() * 2.5;
-      final rotation = angle + burstPhase * (random.nextDouble() - 0.5) * 4;
-      final opacity = (1.0 - progress * 1.5).clamp(0.0, 0.9);
+      final fragWidth = 2.0 + random.nextDouble() * 7.0;
+      final fragHeight = 1.0 + random.nextDouble() * 3.0;
+      final rotation = angle + burstPhase * (random.nextDouble() - 0.5) * 6;
+      final opacity = (1.0 - progress * 1.4).clamp(0.0, 0.9);
 
       if (opacity < 0.01) return const SizedBox.shrink();
 
       final rainbowColors = [
         Colors.white,
-        const Color(0xFFFF88DD),
-        const Color(0xFF88DDFF),
-        const Color(0xFFAAFF88),
-        const Color(0xFFFFBB88),
+        const Color(0xFFFF44AA), // Hot Pink
+        const Color(0xFF44AAFF), // Sky Blue
+        const Color(0xFFAA44FF), // Purple
+        const Color(0xFF44FFBB), // Mint
+        const Color(0xFFFFBB44), // Amber
         tint,
       ];
       final fragColor = rainbowColors[random.nextInt(rainbowColors.length)];
@@ -323,14 +327,14 @@ class _BubbleWidgetState extends State<BubbleWidget>
                   borderRadius: BorderRadius.circular(fragHeight),
                   gradient: LinearGradient(
                     colors: [
-                      fragColor.withOpacity(0.9),
-                      Colors.white.withOpacity(0.6),
+                      fragColor.withOpacity(0.95),
+                      Colors.white.withOpacity(0.7),
                     ],
                   ),
                   boxShadow: [
                     BoxShadow(
-                      color: fragColor.withOpacity(0.4),
-                      blurRadius: 3,
+                      color: fragColor.withOpacity(0.5),
+                      blurRadius: 4,
                     ),
                   ],
                 ),
@@ -346,24 +350,25 @@ class _BubbleWidgetState extends State<BubbleWidget>
     final progress = _popController.value;
     final r = widget.bubble.radius;
 
-    return List.generate(16, (index) {
+    return List.generate(32, (index) {
       final random = math.Random(index * 31 + widget.bubble.id.hashCode);
       final angle = random.nextDouble() * math.pi * 2;
-      final speedFactor = 0.3 + random.nextDouble() * 1.0;
-      final size = 1.5 + random.nextDouble() * 3.5;
+      final speedFactor = 0.4 + random.nextDouble() * 1.4;
+      final size = 1.0 + random.nextDouble() * 4.0;
       final delayedProgress = ((progress - 0.05) / 0.95).clamp(0.0, 1.0);
-      final burstDist = r * 0.5 + Curves.easeOutQuart.transform(delayedProgress) * 50 * speedFactor;
+      final burstDist = r * 0.5 + Curves.easeOutQuart.transform(delayedProgress) * 100 * speedFactor;
       final dx = math.cos(angle) * burstDist;
       var dy = math.sin(angle) * burstDist;
-      dy += Curves.easeInCubic.transform(delayedProgress) * 120;
-      final opacity = (1.0 - delayedProgress * 1.3).clamp(0.0, 1.0);
+      dy += Curves.easeInCubic.transform(delayedProgress) * 150;
+      final opacity = (1.0 - delayedProgress * 1.2).clamp(0.0, 1.0);
 
       if (opacity < 0.01) return const SizedBox.shrink();
 
       final colors = [
         Colors.white,
-        const Color(0xFFFF88EE),
-        const Color(0xFF88EEFF),
+        const Color(0xFFFF55BB),
+        const Color(0xFF55BBFF),
+        const Color(0xFFAA55FF),
         tint,
       ];
       final pColor = colors[random.nextInt(colors.length)];
@@ -382,7 +387,7 @@ class _BubbleWidgetState extends State<BubbleWidget>
                 boxShadow: [
                   BoxShadow(
                     color: pColor.withOpacity(0.5),
-                    blurRadius: 3,
+                    blurRadius: 4,
                   ),
                 ],
               ),

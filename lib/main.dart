@@ -23,8 +23,8 @@ class DoBubbleApp extends StatelessWidget {
           secondary: Color(0xFF88CCFF),
           surface: Color(0xFF0F1826),
         ),
-        // 시스템 기본 폰트 (iOS에서는 SF Pro, Android에서는 Roboto)
-        fontFamily: 'SF Pro Display',
+        // 전역 폰트 적용 (NanumSquareRound)
+        fontFamily: 'NanumSquareRound',
         textTheme: const TextTheme(
           bodyLarge: TextStyle(color: Colors.white),
           bodyMedium: TextStyle(color: Colors.white70),

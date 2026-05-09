@@ -20,11 +20,39 @@ class _HistoryScreenState extends State<HistoryScreen> {
   final GlobalKey _todayKey = GlobalKey();
   String? _todayKeyStr;
   final ScrollController _scrollController = ScrollController();
+  // route 애니메이션 리스너 (Hero 완료 감지용)
+  AnimationStatusListener? _routeAnimationListener;
+  bool _scrolledToToday = false;
 
   @override
   void dispose() {
+    _removeRouteListener();
     _scrollController.dispose();
     super.dispose();
+  }
+
+  void _removeRouteListener() {
+    if (_routeAnimationListener != null) {
+      ModalRoute.of(context)?.animation?.removeStatusListener(_routeAnimationListener!);
+      _routeAnimationListener = null;
+    }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Route 애니메이션이 완전히 끝났을 때 스크롤 — 이미 구독했거나 이미 스크롤했으면 skip
+    if (_routeAnimationListener != null || _scrolledToToday) return;
+    final animation = ModalRoute.of(context)?.animation;
+    if (animation == null) return;
+
+    _routeAnimationListener = (AnimationStatus status) {
+      if (status == AnimationStatus.completed) {
+        _removeRouteListener();
+        _scrollToToday();
+      }
+    };
+    animation.addStatusListener(_routeAnimationListener!);
   }
 
   @override
@@ -36,44 +64,28 @@ class _HistoryScreenState extends State<HistoryScreen> {
     if (widget.initialData != null) {
       _historyData.addAll(widget.initialData!);
       _isLoading = false;
-      // 초기 데이터가 있으면 즉시 스크롤 시도 (모핑/전환 효과와 동기화)
-      _scrollToToday();
+      // 데이터가 이미 있어도 스크롤은 didChangeDependencies의 route 리스너가 처리
     } else {
       _loadHistory();
     }
   }
 
   void _scrollToToday() {
-    if (!mounted) return;
-    
-    // 1. 레이아웃 준비 즉시 시작 (전환 애니메이션과 동기화)
+    if (!mounted || _scrolledToToday) return;
+    _scrolledToToday = true;
+
+    // 이 시점은 Hero 애니메이션이 완전히 끝난 후 — 레이아웃이 확정됨
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) {
-        // 충분히 긴 시간 동안 부드럽게 이동 (선형에 가까운 곡선 사용)
-        _performScroll(duration: const Duration(milliseconds: 1500), curve: Curves.easeOutCubic);
-      }
-    });
-
-    // 2. 전환 애니메이션이 딱 끝나는 시점(750ms)에 '즉시(Duration.zero)' 위치를 한 번 더 고정
-    // 이미 1번 스크롤이 진행 중이거나 거의 도착한 상태이므로, 
-    // 여기서 즉시 고정해버리면 시스템에 의한 '맨 위로 튕김' 현상을 원천 차단할 수 있습니다.
-    Future.delayed(const Duration(milliseconds: 750), () {
-      if (mounted) {
-        _performScroll(duration: Duration.zero);
-      }
-    });
-  }
-
-  void _performScroll({required Duration duration, Curve curve = Curves.easeOutQuart}) {
-    if (!mounted) return;
-    if (_todayKey.currentContext != null) {
+      if (!mounted) return;
+      final ctx = _todayKey.currentContext;
+      if (ctx == null) return;
       Scrollable.ensureVisible(
-        _todayKey.currentContext!,
-        duration: duration,
-        curve: curve,
+        ctx,
         alignment: 0.0,
+        duration: const Duration(milliseconds: 450),
+        curve: Curves.easeOutCubic,
       );
-    }
+    });
   }
 
   Future<void> _loadHistory() async {
@@ -106,7 +118,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
 
     if (mounted) {
       setState(() => _isLoading = false);
-      _scrollToToday();
+      // 스크롤은 didChangeDependencies의 route 애니메이션 리스너가 처리
     }
   }
 
@@ -280,22 +292,21 @@ class _HistoryScreenState extends State<HistoryScreen> {
               Positioned(
                 top: MediaQuery.of(context).padding.top + 10,
                 right: 20,
-                child: GlassmorphicContainer(
-                  width: 44,
-                  height: 44,
-                  borderRadius: 22,
-                  blur: 15,
-                  alignment: Alignment.center,
-                  border: 1,
-                  linearGradient: LinearGradient(
-                    colors: [Colors.white.withOpacity(0.2), Colors.white.withOpacity(0.1)],
-                  ),
-                  borderGradient: LinearGradient(
-                    colors: [Colors.white.withOpacity(0.4), Colors.white.withOpacity(0.1)],
-                  ),
-                  child: InkWell(
-                    onTap: () => Navigator.pop(context),
-                    borderRadius: BorderRadius.circular(22),
+                child: _GlassPressButton(
+                  onTap: () => Navigator.pop(context),
+                  child: GlassmorphicContainer(
+                    width: 44,
+                    height: 44,
+                    borderRadius: 22,
+                    blur: 15,
+                    alignment: Alignment.center,
+                    border: 1,
+                    linearGradient: LinearGradient(
+                      colors: [Colors.white.withOpacity(0.2), Colors.white.withOpacity(0.1)],
+                    ),
+                    borderGradient: LinearGradient(
+                      colors: [Colors.white.withOpacity(0.4), Colors.white.withOpacity(0.1)],
+                    ),
                     child: const Center(
                       child: Icon(Icons.close_rounded, color: Colors.white, size: 24),
                     ),
@@ -354,16 +365,22 @@ class _HistoryScreenState extends State<HistoryScreen> {
   }
 
   Widget _buildHistoryList() {
-    return ListView.builder(
+    return SingleChildScrollView(
       controller: _scrollController,
-      key: const PageStorageKey('history_list'),
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-      itemCount: _historyData.length,
-      itemBuilder: (context, index) {
-        final date = _historyData.keys.elementAt(index);
-        final bubbles = _historyData[date]!;
-        return _buildDateSection(date, bubbles, key: date == _todayKeyStr ? _todayKey : null);
-      },
+      child: Column(
+        children: [
+          ..._historyData.entries.map((entry) {
+            return _buildDateSection(
+              entry.key,
+              entry.value,
+              key: entry.key == _todayKeyStr ? _todayKey : null,
+            );
+          }),
+          // 오늘 날짜가 마지막 아이템일 때도 최상단에 위치할 수 있도록 여백 추가
+          SizedBox(height: MediaQuery.of(context).size.height * 0.5),
+        ],
+      ),
     );
   }
 
@@ -601,9 +618,16 @@ class _SlidableBubbleItemState extends State<_SlidableBubbleItem> with SingleTic
                           style: TextStyle(
                             color: isPopped ? Colors.white38 : Colors.white.withOpacity(0.9),
                             fontSize: 16,
-                            fontWeight: FontWeight.w500,
-                            fontFamily: 'Pretendard',
+                            fontWeight: FontWeight.w800,
+                            fontFamily: 'NanumSquareRound',
                             decoration: null,
+                            shadows: [
+                              // 폰트 두께 보강용 미세 그림자
+                              Shadow(offset: const Offset(-0.4, -0.4), color: Colors.white.withOpacity(0.2)),
+                              Shadow(offset: const Offset(0.4, -0.4), color: Colors.white.withOpacity(0.2)),
+                              Shadow(offset: const Offset(0.4, 0.4), color: Colors.white.withOpacity(0.2)),
+                              Shadow(offset: const Offset(-0.4, 0.4), color: Colors.white.withOpacity(0.2)),
+                            ],
                           ),
                         ),
                       ),
@@ -703,6 +727,117 @@ class _GlassNotificationState extends State<_GlassNotification> with SingleTicke
               ),
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+// ── 글래스 버튼 눌림 이펙트 위젯 ──
+class _GlassPressButton extends StatefulWidget {
+  final Widget child;
+  final VoidCallback onTap;
+
+  const _GlassPressButton({required this.child, required this.onTap});
+
+  @override
+  State<_GlassPressButton> createState() => _GlassPressButtonState();
+}
+
+class _GlassPressButtonState extends State<_GlassPressButton>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  late Animation<double> _glow;
+  bool _pressed = false;
+  bool _longPressed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 120),
+    );
+    _glow = CurvedAnimation(parent: _controller, curve: Curves.easeOut);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _down(_) {
+    setState(() {
+      _pressed = true;
+      _longPressed = false;
+    });
+    _controller.forward();
+    HapticFeedback.selectionClick();
+  }
+
+  void _up(_) {
+    setState(() {
+      _pressed = false;
+      _longPressed = false;
+    });
+    _controller.reverse();
+    widget.onTap();
+  }
+
+  void _cancel() {
+    setState(() {
+      _pressed = false;
+      _longPressed = false;
+    });
+    _controller.reverse();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTapDown: _down,
+      onTapUp: _up,
+      onTapCancel: _cancel,
+      onLongPressStart: (_) {
+        setState(() => _longPressed = true);
+        HapticFeedback.heavyImpact();
+      },
+      onLongPressEnd: (_) => _cancel(),
+      child: AnimatedScale(
+        scale: _longPressed ? 1.25 : (_pressed ? 1.15 : 1.0),
+        duration: const Duration(milliseconds: 150),
+        curve: Curves.easeOutBack,
+        child: AnimatedBuilder(
+          animation: _glow,
+          builder: (context, child) {
+            return Stack(
+              alignment: Alignment.center,
+              children: [
+                child!,
+                // 흰 글로우 오버레이
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: Opacity(
+                      opacity: _glow.value,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          gradient: RadialGradient(
+                            colors: [
+                              Colors.white.withOpacity(0.5),
+                              Colors.white.withOpacity(0.0),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            );
+          },
+          child: widget.child,
         ),
       ),
     );

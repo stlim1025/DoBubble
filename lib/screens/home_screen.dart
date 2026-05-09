@@ -291,22 +291,27 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
   void _updatePhysics() {
     if (!mounted) return;
 
-    // 프레임 레이트 제한 (최대 60fps 정도) - 발열 및 배터리 절약
     final now = DateTime.now();
     if (_lastPhysicsTime != null) {
       if (now.difference(_lastPhysicsTime!).inMilliseconds < 16) return;
     }
     _lastPhysicsTime = now;
 
-    // 하단 입력창 영역 계산 (키보드 높이 포함)
     final bottomInset = MediaQuery.of(context).viewInsets.bottom;
-    final inputBarHeight = 110.0; // 입력창 대략적 높이
+    const inputBarHeight = 110.0;
     final inputBarBottom = bottomInset > 0 ? bottomInset + 16 : 32.0;
     final bottomLimit = _screenSize.height - inputBarBottom - inputBarHeight;
     final topLimit = MediaQuery.of(context).padding.top + 70.0;
 
-    // 현재 활성화된 페이지와 그 인접 페이지의 버블들 업데이트
-    _bubblesByDate.forEach((key, bubbles) {
+    // 최적화: 모든 날짜가 아닌 현재 보이고 있는 페이지와 양옆 페이지의 버블만 연산
+    final currentKey = _dateKey(_selectedDate);
+    final prevKey = _dateKey(_selectedDate.subtract(const Duration(days: 1)));
+    final nextKey = _dateKey(_selectedDate.add(const Duration(days: 1)));
+    
+    for (final key in [prevKey, currentKey, nextKey]) {
+      final bubbles = _bubblesByDate[key];
+      if (bubbles == null || bubbles.isEmpty) continue;
+
       for (int i = 0; i < bubbles.length; i++) {
         final bubble = bubbles[i];
         if (bubble.state != BubbleState.popping && bubble.state != BubbleState.popped) { 
@@ -314,7 +319,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
         }
       }
       
-      // 버블 간 충돌 감지
       for (int i = 0; i < bubbles.length; i++) {
         final a = bubbles[i];
         if (a.state == BubbleState.popping || a.state == BubbleState.popped) continue;
@@ -355,7 +359,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
           }
         }
       }
-    });
+    }
   }
 
   void _addTodo(String task) {
@@ -652,42 +656,44 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
                 },
 
                 behavior: HitTestBehavior.opaque,
-                child: AnimatedBuilder(
-                  animation: _bgAnim,
-                  builder: (context, child) {
-                    return Stack(
-                      children: [
-                        Container(
-                          decoration: BoxDecoration(
-                            gradient: LinearGradient(
-                              begin: Alignment.topLeft,
-                              end: Alignment.bottomRight,
-                              colors: [
-                                Color.lerp(const Color(0xFF0F172A), const Color(0xFF1E1B4B), _bgAnim.value)!,
-                                Color.lerp(const Color(0xFF1E1B4B), const Color(0xFF0B1120), _bgAnim.value)!,
-                              ],
+                child: RepaintBoundary(
+                  child: AnimatedBuilder(
+                    animation: _bgAnim,
+                    builder: (context, child) {
+                      return Stack(
+                        children: [
+                          Container(
+                            decoration: BoxDecoration(
+                              gradient: LinearGradient(
+                                begin: Alignment.topLeft,
+                                end: Alignment.bottomRight,
+                                colors: [
+                                  Color.lerp(const Color(0xFF0F172A), const Color(0xFF1E1B4B), _bgAnim.value)!,
+                                  Color.lerp(const Color(0xFF1E1B4B), const Color(0xFF0B1120), _bgAnim.value)!,
+                                ],
+                              ),
                             ),
                           ),
-                        ),
-                        // Animated glowing orbs
-                        Positioned(
-                          top: 100 + 50 * sin(_bgAnim.value * pi),
-                          left: -100,
-                          child: _buildGlowOrb(const Color(0xFF4488FF), 400, 0.6),
-                        ),
-                        Positioned(
-                          bottom: -150,
-                          right: -100 + 50 * cos(_bgAnim.value * pi),
-                          child: _buildGlowOrb(const Color(0xFF88CCFF), 500, 0.4),
-                        ),
-                        Positioned(
-                          top: MediaQuery.of(context).size.height * 0.4,
-                          right: -50,
-                          child: _buildGlowOrb(const Color(0xFF6366F1), 300, 0.5),
-                        ),
-                      ],
-                    );
-                  },
+                          // Animated glowing orbs
+                          Positioned(
+                            top: 100 + 50 * sin(_bgAnim.value * pi),
+                            left: -100,
+                            child: _buildGlowOrb(const Color(0xFF4488FF), 400, 0.6),
+                          ),
+                          Positioned(
+                            bottom: -150,
+                            right: -100 + 50 * cos(_bgAnim.value * pi),
+                            child: _buildGlowOrb(const Color(0xFF88CCFF), 500, 0.4),
+                          ),
+                          Positioned(
+                            top: MediaQuery.of(context).size.height * 0.4,
+                            right: -50,
+                            child: _buildGlowOrb(const Color(0xFF6366F1), 300, 0.5),
+                          ),
+                        ],
+                      );
+                    },
+                  ),
                 ),
               ),
             ),
@@ -888,7 +894,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
                 bottom: bottomInset > 0 ? bottomInset + 16 : 32,
                 child: Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 20),
-                  child: _buildBottomInputBar(),
+                  child: RepaintBoundary(child: _buildBottomInputBar()),
                 ),
               ),
             
@@ -967,7 +973,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
             ),
           );
         },
-        transitionDuration: const Duration(milliseconds: 750),
+        transitionDuration: const Duration(milliseconds: 350),
       ),
     ).then((_) {
       if (mounted) {
@@ -1042,22 +1048,21 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
   }
 
   Widget _buildGlassDateChip(String label, VoidCallback onTap) {
-    return GlassmorphicContainer(
-      width: 200, // 넓이 대략 설정
-      height: 44,
-      borderRadius: 25,
-      blur: 15,
-      alignment: Alignment.center,
-      border: 1,
-      linearGradient: LinearGradient(
-        colors: [Colors.white.withOpacity(0.15), Colors.white.withOpacity(0.05)],
-      ),
-      borderGradient: LinearGradient(
-        colors: [Colors.white.withOpacity(0.4), Colors.white.withOpacity(0.1)],
-      ),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(25),
+    return InteractiveGlassWidget(
+      onTap: onTap,
+      child: GlassmorphicContainer(
+        width: 200, // 넓이 대략 설정
+        height: 44,
+        borderRadius: 25,
+        blur: 15,
+        alignment: Alignment.center,
+        border: 1,
+        linearGradient: LinearGradient(
+          colors: [Colors.white.withOpacity(0.15), Colors.white.withOpacity(0.05)],
+        ),
+        borderGradient: LinearGradient(
+          colors: [Colors.white.withOpacity(0.4), Colors.white.withOpacity(0.1)],
+        ),
         child: Center(
           child: Text(
             label,
@@ -1230,29 +1235,28 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
   }
 
   Widget _buildSendButton() {
-    return GlassmorphicContainer(
-      width: 44,
-      height: 44,
-      borderRadius: 22,
-      blur: 10,
-      alignment: Alignment.center,
-      border: 1,
-      linearGradient: LinearGradient(
-        colors: _isInputFocused
-            ? [const Color(0xFF4488FF).withOpacity(0.4), const Color(0xFF2255CC).withOpacity(0.2)]
-            : [Colors.white.withOpacity(0.1), Colors.white.withOpacity(0.05)],
-      ),
-      borderGradient: LinearGradient(
-        colors: _isInputFocused
-            ? [const Color(0xFF88BBFF).withOpacity(0.5), const Color(0xFF4488FF).withOpacity(0.2)]
-            : [Colors.white.withOpacity(0.3), Colors.white.withOpacity(0.1)],
-      ),
-      child: InkWell(
-        onTap: () {
-          _addTodo(_taskController.text);
-          _focusNode.unfocus();
-        },
-        borderRadius: BorderRadius.circular(22),
+    return InteractiveGlassWidget(
+      onTap: () {
+        _addTodo(_taskController.text);
+        _focusNode.unfocus();
+      },
+      child: GlassmorphicContainer(
+        width: 44,
+        height: 44,
+        borderRadius: 22,
+        blur: 10,
+        alignment: Alignment.center,
+        border: 1,
+        linearGradient: LinearGradient(
+          colors: _isInputFocused
+              ? [const Color(0xFF4488FF).withOpacity(0.4), const Color(0xFF2255CC).withOpacity(0.2)]
+              : [Colors.white.withOpacity(0.1), Colors.white.withOpacity(0.05)],
+        ),
+        borderGradient: LinearGradient(
+          colors: _isInputFocused
+              ? [const Color(0xFF88BBFF).withOpacity(0.5), const Color(0xFF4488FF).withOpacity(0.2)]
+              : [Colors.white.withOpacity(0.3), Colors.white.withOpacity(0.1)],
+        ),
         child: Center(
           child: Icon(
             Icons.bubble_chart_rounded,
@@ -1265,24 +1269,23 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
   }
 
   Widget _buildRepeatToggle() {
-    return GlassmorphicContainer(
-      width: 60,
-      height: 36,
-      borderRadius: 16,
-      blur: 10,
-      alignment: Alignment.center,
-      border: 1,
-      linearGradient: LinearGradient(
-        colors: _isRepeating
-            ? [Colors.white.withOpacity(0.25), Colors.white.withOpacity(0.1)]
-            : [Colors.white.withOpacity(0.08), Colors.white.withOpacity(0.02)],
-      ),
-      borderGradient: LinearGradient(
-        colors: [Colors.white.withOpacity(_isRepeating ? 0.6 : 0.2), Colors.white.withOpacity(0.1)],
-      ),
-      child: InkWell(
-        onTap: () => setState(() => _isRepeating = !_isRepeating),
-        borderRadius: BorderRadius.circular(16),
+    return InteractiveGlassWidget(
+      onTap: () => setState(() => _isRepeating = !_isRepeating),
+      child: GlassmorphicContainer(
+        width: 60,
+        height: 36,
+        borderRadius: 16,
+        blur: 10,
+        alignment: Alignment.center,
+        border: 1,
+        linearGradient: LinearGradient(
+          colors: _isRepeating
+              ? [Colors.white.withOpacity(0.25), Colors.white.withOpacity(0.1)]
+              : [Colors.white.withOpacity(0.08), Colors.white.withOpacity(0.02)],
+        ),
+        borderGradient: LinearGradient(
+          colors: [Colors.white.withOpacity(_isRepeating ? 0.6 : 0.2), Colors.white.withOpacity(0.1)],
+        ),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
@@ -1310,26 +1313,25 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
     final bool selected = _selectedPriority == priority;
     final Color priorityColor = TodoBubble.getPriorityColor(priority);
     
-    return GlassmorphicContainer(
-      width: 36,
-      height: 36,
-      borderRadius: 18,
-      blur: 10,
-      alignment: Alignment.center,
-      border: selected ? 2.0 : 1.0,
-      linearGradient: LinearGradient(
-        colors: selected
-            ? [priorityColor.withOpacity(0.4), priorityColor.withOpacity(0.1)]
-            : [Colors.white.withOpacity(0.08), Colors.white.withOpacity(0.04)],
-      ),
-      borderGradient: LinearGradient(
-        colors: selected
-            ? [priorityColor.withOpacity(0.8), priorityColor.withOpacity(0.3)]
-            : [Colors.white.withOpacity(0.2), Colors.white.withOpacity(0.05)],
-      ),
-      child: InkWell(
-        onTap: () => setState(() => _selectedPriority = priority),
-        borderRadius: BorderRadius.circular(18),
+    return InteractiveGlassWidget(
+      onTap: () => setState(() => _selectedPriority = priority),
+      child: GlassmorphicContainer(
+        width: 36,
+        height: 36,
+        borderRadius: 18,
+        blur: 10,
+        alignment: Alignment.center,
+        border: selected ? 2.0 : 1.0,
+        linearGradient: LinearGradient(
+          colors: selected
+              ? [priorityColor.withOpacity(0.4), priorityColor.withOpacity(0.1)]
+              : [Colors.white.withOpacity(0.08), Colors.white.withOpacity(0.04)],
+        ),
+        borderGradient: LinearGradient(
+          colors: selected
+              ? [priorityColor.withOpacity(0.8), priorityColor.withOpacity(0.3)]
+              : [Colors.white.withOpacity(0.2), Colors.white.withOpacity(0.05)],
+        ),
         child: Center(
           child: Text(
             '$priority',
@@ -1704,32 +1706,103 @@ class InteractiveGlassWidget extends StatefulWidget {
   State<InteractiveGlassWidget> createState() => _InteractiveGlassWidgetState();
 }
 
-class _InteractiveGlassWidgetState extends State<InteractiveGlassWidget> {
+class _InteractiveGlassWidgetState extends State<InteractiveGlassWidget>
+    with SingleTickerProviderStateMixin {
   bool _isPressed = false;
+  bool _isLongPressed = false;
+  late AnimationController _glowController;
+  late Animation<double> _glowAnim;
+
+  @override
+  void initState() {
+    super.initState();
+    _glowController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 120),
+    );
+    _glowAnim = CurvedAnimation(parent: _glowController, curve: Curves.easeOut);
+  }
+
+  @override
+  void dispose() {
+    _glowController.dispose();
+    super.dispose();
+  }
+
+  void _onDown(_) {
+    HapticFeedback.selectionClick();
+    setState(() {
+      _isPressed = true;
+      _isLongPressed = false;
+    });
+    _glowController.forward();
+  }
+
+  void _onUp(_) {
+    setState(() {
+      _isPressed = false;
+      _isLongPressed = false;
+    });
+    _glowController.reverse();
+    widget.onTap();
+  }
+
+  void _onCancel() {
+    setState(() {
+      _isPressed = false;
+      _isLongPressed = false;
+    });
+    _glowController.reverse();
+  }
 
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      onTapDown: (_) {
-        HapticFeedback.selectionClick();
-        setState(() => _isPressed = true);
+      onTapDown: _onDown,
+      onTapUp: _onUp,
+      onTapCancel: _onCancel,
+      onLongPressStart: (_) {
+        setState(() => _isLongPressed = true);
+        HapticFeedback.heavyImpact();
+        if (widget.onLongPress != null) widget.onLongPress!();
       },
-      onTapUp: (_) {
-        setState(() => _isPressed = false);
-        widget.onTap();
-      },
-      onLongPress: () {
-        setState(() => _isPressed = false);
-        if (widget.onLongPress != null) {
-          widget.onLongPress!();
-        }
-      },
-      onTapCancel: () => setState(() => _isPressed = false),
+      onLongPressEnd: (_) => _onCancel(),
       child: AnimatedScale(
-        scale: _isPressed ? 1.05 : 1.0,
-        duration: const Duration(milliseconds: 100),
+        scale: _isLongPressed ? 1.25 : (_isPressed ? 1.15 : 1.0),
+        duration: const Duration(milliseconds: 150),
         curve: Curves.easeOutBack,
-        child: widget.child,
+        child: AnimatedBuilder(
+          animation: _glowAnim,
+          builder: (context, child) {
+            return Stack(
+              alignment: Alignment.center,
+              children: [
+                child!,
+                // 글래스 하이라이트 오버레이
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: Opacity(
+                      opacity: _glowAnim.value,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          gradient: RadialGradient(
+                            colors: [
+                              Colors.white.withOpacity(0.45),
+                              Colors.white.withOpacity(0.0),
+                            ],
+                            stops: const [0.0, 1.0],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            );
+          },
+          child: widget.child,
+        ),
       ),
     );
   }
