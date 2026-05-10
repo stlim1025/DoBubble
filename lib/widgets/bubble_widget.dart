@@ -18,7 +18,16 @@ class BubbleWidget extends StatefulWidget {
     required this.onPop,
     this.onLongPress,
     this.isReadOnly = false,
+    this.onDragStart,
+    this.onPanDown,
+    this.onDragUpdate,
+    this.onDragEnd,
   });
+
+  final VoidCallback? onPanDown;
+  final Function(Offset position)? onDragStart;
+  final Function(Offset position)? onDragUpdate;
+  final Function(Offset velocity)? onDragEnd;
 
   @override
   State<BubbleWidget> createState() => _BubbleWidgetState();
@@ -98,7 +107,28 @@ class _BubbleWidgetState extends State<BubbleWidget>
         }
       },
       onTapCancel: () => setState(() => _isPressed = false),
+      onPanDown: (_) {
+        if (!widget.isReadOnly) {
+          widget.onPanDown?.call();
+        }
+      },
       onLongPress: widget.onLongPress != null ? () => widget.onLongPress!(widget.bubble.position) : null,
+      onPanStart: (details) {
+        if (!widget.isReadOnly) {
+          HapticFeedback.selectionClick();
+          widget.onDragStart?.call(details.globalPosition);
+        }
+      },
+      onPanUpdate: (details) {
+        if (!widget.isReadOnly) {
+          widget.onDragUpdate?.call(details.globalPosition);
+        }
+      },
+      onPanEnd: (details) {
+        if (!widget.isReadOnly) {
+          widget.onDragEnd?.call(details.velocity.pixelsPerSecond);
+        }
+      },
       child: AnimatedBuilder(
         animation: Listenable.merge([_blowController, _popController, widget.shimmerController]),
         child: _cachedBody, // 정적 본체 완전 캐싱

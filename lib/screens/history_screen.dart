@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'dart:convert';
+import 'dart:async';
 import 'dart:ui';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:glassmorphism/glassmorphism.dart';
+import 'package:flutter/rendering.dart';
 import '../models/todo_bubble.dart';
+import '../widgets/glass_calendar.dart';
 
 class HistoryScreen extends StatefulWidget {
   final Map<String, List<TodoBubble>>? initialData;
@@ -14,20 +17,28 @@ class HistoryScreen extends StatefulWidget {
   State<HistoryScreen> createState() => _HistoryScreenState();
 }
 
-class _HistoryScreenState extends State<HistoryScreen> {
+class _HistoryScreenState extends State<HistoryScreen> with TickerProviderStateMixin {
   final Map<String, List<TodoBubble>> _historyData = {};
   bool _isLoading = true;
-  final GlobalKey _todayKey = GlobalKey();
+  final Map<String, GlobalKey> _sectionKeys = {}; // 날짜별 섹션 키 저장
   String? _todayKeyStr;
   final ScrollController _scrollController = ScrollController();
   // route 애니메이션 리스너 (Hero 완료 감지용)
   AnimationStatusListener? _routeAnimationListener;
   bool _scrolledToToday = false;
 
+  // 달력 관련
+  bool _isCalendarOpen = false;
+  late AnimationController _calendarController;
+  late Animation<double> _calendarAnimation;
+  DateTime _selectedCalendarDate = DateTime.now();
+  bool _showReturnToToday = false;
+
   @override
   void dispose() {
     _removeRouteListener();
     _scrollController.dispose();
+    _calendarController.dispose();
     super.dispose();
   }
 
@@ -49,7 +60,8 @@ class _HistoryScreenState extends State<HistoryScreen> {
     _routeAnimationListener = (AnimationStatus status) {
       if (status == AnimationStatus.completed) {
         _removeRouteListener();
-        _scrollToToday();
+        // 렌더링이 완료된 후 스크롤을 보장하기 위해 PostFrameCallback 사용
+        WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToToday());
       }
     };
     animation.addStatusListener(_routeAnimationListener!);
@@ -60,6 +72,19 @@ class _HistoryScreenState extends State<HistoryScreen> {
     super.initState();
     final now = DateTime.now();
     _todayKeyStr = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+    _selectedCalendarDate = now;
+
+    _calendarController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 500),
+    );
+    _calendarAnimation = CurvedAnimation(
+      parent: _calendarController,
+      curve: Curves.easeOutBack,
+      reverseCurve: Curves.easeInBack,
+    );
+    
+    _scrollController.addListener(_scrollListener);
     
     if (widget.initialData != null) {
       _historyData.addAll(widget.initialData!);
@@ -70,23 +95,6 @@ class _HistoryScreenState extends State<HistoryScreen> {
     }
   }
 
-  void _scrollToToday() {
-    if (!mounted || _scrolledToToday) return;
-    _scrolledToToday = true;
-
-    // 이 시점은 Hero 애니메이션이 완전히 끝난 후 — 레이아웃이 확정됨
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      final ctx = _todayKey.currentContext;
-      if (ctx == null) return;
-      Scrollable.ensureVisible(
-        ctx,
-        alignment: 0.0,
-        duration: const Duration(milliseconds: 450),
-        curve: Curves.easeOutCubic,
-      );
-    });
-  }
 
   Future<void> _loadHistory() async {
     final prefs = await SharedPreferences.getInstance();
@@ -118,7 +126,8 @@ class _HistoryScreenState extends State<HistoryScreen> {
 
     if (mounted) {
       setState(() => _isLoading = false);
-      // 스크롤은 didChangeDependencies의 route 애니메이션 리스너가 처리
+      // 데이터 로드 후 오늘 날짜로 스크롤 시도 (애니메이션이 이미 끝났을 수도 있으므로)
+      WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToToday());
     }
   }
 
@@ -216,18 +225,103 @@ class _HistoryScreenState extends State<HistoryScreen> {
     });
   }
 
+  void _toggleCalendar() {
+    setState(() {
+      _isCalendarOpen = !_isCalendarOpen;
+      if (_isCalendarOpen) {
+        _calendarController.forward();
+      } else {
+        _calendarController.reverse();
+      }
+    });
+    HapticFeedback.selectionClick();
+  }
+
+  void _onCalendarDateSelected(DateTime date) {
+    setState(() {
+      _isCalendarOpen = false;
+      _calendarController.reverse();
+      _selectedCalendarDate = date;
+    });
+
+    final dateKey = '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+    _scrollToDate(dateKey);
+    HapticFeedback.mediumImpact();
+  }
+
+  void _scrollListener() {
+    if (_todayKeyStr == null) return;
+    final ctx = _sectionKeys[_todayKeyStr!]?.currentContext;
+    if (ctx == null) {
+      if (!_showReturnToToday) setState(() => _showReturnToToday = true);
+      return;
+    }
+
+    try {
+      final RenderBox box = ctx.findRenderObject() as RenderBox;
+      final position = box.localToGlobal(Offset.zero).dy;
+      
+      // 헤더 영역(약 100px)을 기준으로 위아래로 벗어나면 버튼 노출
+      final bool shouldShow = (position < 80 || position > MediaQuery.of(context).size.height - 150);
+      
+      if (shouldShow != _showReturnToToday) {
+        setState(() => _showReturnToToday = shouldShow);
+      }
+    } catch (_) {
+      // RenderObject를 찾을 수 없는 경우 등 예외 처리
+    }
+  }
+
+  bool _isDateActive(DateTime date) {
+    final key = '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+    return _historyData.containsKey(key) && _historyData[key]!.isNotEmpty;
+  }
+
+  void _scrollToToday() {
+    if (_scrolledToToday || _todayKeyStr == null) return;
+    _scrollToDate(_todayKeyStr!, isInitialScroll: true);
+  }
+
+  void _scrollToDate(String dateKey, {int retryCount = 0, bool isInitialScroll = false}) {
+    final ctx = _sectionKeys[dateKey]?.currentContext;
+    if (ctx != null) {
+      if (isInitialScroll) _scrolledToToday = true;
+      
+      // 상단 헤더에 가려지지 않도록 오프셋 계산 (헤더 높이 약 110px 제외)
+      final RenderObject? renderObject = ctx.findRenderObject();
+      if (renderObject is RenderBox) {
+        final viewport = RenderAbstractViewport.of(renderObject);
+        if (viewport != null) {
+          final double headerOffset = 110.0; // 헤더 높이만큼 여백
+          final double targetOffset = viewport.getOffsetToReveal(renderObject, 0.0).offset - headerOffset;
+          
+          _scrollController.animateTo(
+            targetOffset.clamp(0.0, _scrollController.position.maxScrollExtent),
+            duration: const Duration(milliseconds: 600),
+            curve: Curves.easeInOutCubic,
+          );
+        }
+      }
+    } else if (retryCount < 5) {
+      // 아직 렌더링이 안 되었을 수 있으므로 잠시 후 재시도
+      Future.delayed(const Duration(milliseconds: 100), () {
+        if (mounted) _scrollToDate(dateKey, retryCount: retryCount + 1, isInitialScroll: isInitialScroll);
+      });
+    } else if (!isInitialScroll) {
+      // 초기 자동 스크롤이 아닌 수동 선택 시에만 알림 표시
+      _showGlassNotification('${dateKey.split('-')[1]}월 ${dateKey.split('-')[2]}일은 기록이 없어요.');
+    }
+  }
+
   Future<void> _cleanupFutureRepeatingTasks(String taskName) async {
-    // ... (기존 구현 유지)
     final prefs = await SharedPreferences.getInstance();
     final keys = prefs.getKeys().where((k) => k.startsWith('bubbles_')).toList();
     
-    // 오늘 날짜 계산
     final now = DateTime.now();
     final todayKey = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
     
     for (var key in keys) {
       final dateStr = key.replaceFirst('bubbles_', '');
-      // 오늘 포함 이후 날짜만 처리
       if (dateStr.compareTo(todayKey) >= 0) {
         final jsonStr = prefs.getString(key);
         if (jsonStr != null) {
@@ -240,7 +334,6 @@ class _HistoryScreenState extends State<HistoryScreen> {
             
             if (bubbles.length != initialCount) {
               await prefs.setString(key, jsonEncode(bubbles.map((b) => b.toJson()).toList()));
-              // 만약 현재 메모리에 로드된 데이터라면 업데이트
               if (_historyData.containsKey(dateStr)) {
                 setState(() {
                   _historyData[dateStr] = bubbles;
@@ -255,10 +348,16 @@ class _HistoryScreenState extends State<HistoryScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: Hero(
-        tag: 'history_transition',
-        child: Material(
+    return PopScope(
+      canPop: true,
+      onPopInvoked: (didPop) {
+        if (didPop) return;
+        Navigator.pop(context);
+      },
+      child: Scaffold(
+        body: Hero(
+          tag: 'history_transition',
+          child: Material(
           color: Colors.transparent,
           child: Stack(
             children: [
@@ -272,51 +371,152 @@ class _HistoryScreenState extends State<HistoryScreen> {
                 ),
               ),
               SafeArea(
-                child: OverflowBox(
-                  alignment: Alignment.topLeft,
-                  maxWidth: MediaQuery.of(context).size.width,
-                  maxHeight: MediaQuery.of(context).size.height,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      _buildHeader(context),
-                      Expanded(
-                        child: _historyData.isEmpty 
-                          ? (_isLoading ? const SizedBox.shrink() : _buildEmptyState())
-                          : _buildHistoryList(),
+                bottom: false,
+                child: Stack(
+                  children: [
+                    // 1. 전체 화면 리스트 (가장 아래 레이어)
+                    Positioned.fill(
+                      child: _historyData.isEmpty 
+                        ? (_isLoading ? const SizedBox.shrink() : _buildEmptyState())
+                        : _buildHistoryList(),
+                    ),
+                    
+                    // 2. 상단 그라데이션 및 컨트롤 영역 (가장 위 레이어)
+                    Positioned(
+                      top: 0,
+                      left: 0,
+                      right: 0,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.topCenter,
+                            end: Alignment.bottomCenter,
+                            colors: [
+                              const Color(0xFF0F172A),
+                              const Color(0xFF0F172A).withOpacity(0.9),
+                              const Color(0xFF0F172A).withOpacity(0.0),
+                            ],
+                            stops: const [0.0, 0.6, 1.0],
+                          ),
+                        ),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            _buildHeader(context),
+                            
+                            // 인라인 달력
+                            AnimatedBuilder(
+                              animation: _calendarAnimation,
+                              builder: (context, child) {
+                                final controllerValue = _calendarController.value;
+                                final curveValue = _calendarAnimation.value;
+                                
+                                final screenWidth = MediaQuery.of(context).size.width;
+                                final targetWidth = screenWidth - 40;
+                                final startWidth = 140.0;
+                                
+                                final targetHeight = 380.0;
+                                final startHeight = 44.0;
+                                
+                                final currentWidth = lerpDouble(startWidth, targetWidth, curveValue)!;
+                                final currentHeight = lerpDouble(startHeight, targetHeight, curveValue)!;
+                                final currentRadius = lerpDouble(22, 28, curveValue)!;
+
+                                return Align(
+                                  heightFactor: curveValue.clamp(0.0, 1.0),
+                                  alignment: Alignment.topCenter,
+                                  child: ClipRect(
+                                    child: Center(
+                                      child: Opacity(
+                                        opacity: controllerValue.clamp(0.0, 1.0),
+                                        child: Padding(
+                                          padding: const EdgeInsets.only(bottom: 20),
+                                          child: GlassCalendar(
+                                            initialDate: _selectedCalendarDate,
+                                            today: DateTime.now(),
+                                            onDateSelected: _onCalendarDateSelected,
+                                            width: currentWidth,
+                                            height: currentHeight,
+                                            borderRadius: currentRadius,
+                                            animationValue: controllerValue,
+                                            isDateEnabled: _isDateActive,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                          ],
+                        ),
                       ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
               ),
+              
+              // 오늘로 돌아가기 플로팅 버튼
               Positioned(
-                top: MediaQuery.of(context).padding.top + 10,
-                right: 20,
-                child: _GlassPressButton(
-                  onTap: () {
-                    FocusManager.instance.primaryFocus?.unfocus();
-                    Navigator.pop(context);
-                  },
-                  child: GlassmorphicContainer(
-                    width: 44,
-                    height: 44,
-                    borderRadius: 22,
-                    blur: 15,
-                    alignment: Alignment.center,
-                    border: 1,
-                    linearGradient: LinearGradient(
-                      colors: [Colors.white.withOpacity(0.2), Colors.white.withOpacity(0.1)],
-                    ),
-                    borderGradient: LinearGradient(
-                      colors: [Colors.white.withOpacity(0.4), Colors.white.withOpacity(0.1)],
-                    ),
-                    child: const Center(
-                      child: Icon(Icons.close_rounded, color: Colors.white, size: 24),
+                bottom: 0,
+                left: 0,
+                right: 0,
+                child: _buildReturnToTodayFloatingBtn(),
+              ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildReturnToTodayFloatingBtn() {
+    return AnimatedSlide(
+      offset: _showReturnToToday ? Offset.zero : const Offset(0, 2),
+      duration: const Duration(milliseconds: 400),
+      curve: Curves.easeOutBack,
+      child: AnimatedOpacity(
+        opacity: _showReturnToToday ? 1.0 : 0.0,
+        duration: const Duration(milliseconds: 300),
+        child: Padding(
+          padding: const EdgeInsets.only(bottom: 30),
+          child: _GlassPressButton(
+            onTap: () {
+              if (_todayKeyStr != null) {
+                _scrollToDate(_todayKeyStr!);
+              }
+              HapticFeedback.mediumImpact();
+            },
+            child: GlassmorphicContainer(
+              width: 140,
+              height: 44,
+              borderRadius: 22,
+              blur: 15,
+              alignment: Alignment.center,
+              border: 1,
+              linearGradient: LinearGradient(
+                colors: [Colors.white.withOpacity(0.15), Colors.white.withOpacity(0.05)],
+              ),
+              borderGradient: LinearGradient(
+                colors: [Colors.white.withOpacity(0.4), Colors.white.withOpacity(0.1)],
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(Icons.today_rounded, color: Colors.white, size: 18),
+                  const SizedBox(width: 8),
+                  const Text(
+                    '오늘로 돌아가기',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
                     ),
                   ),
-                ),
+                ],
               ),
-            ],
+            ),
           ),
         ),
       ),
@@ -326,25 +526,86 @@ class _HistoryScreenState extends State<HistoryScreen> {
   Widget _buildHeader(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.all(20.0),
-      child: Column(
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            '비눗방울 기록',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 28,
-              fontWeight: FontWeight.bold,
-              letterSpacing: -0.5,
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  '비눗방울 기록',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 28,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: -0.5,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '터뜨린 할 일들을 확인할 수 있어요',
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.5),
+                    fontSize: 14,
+                  ),
+                ),
+              ],
             ),
           ),
-          const SizedBox(height: 4),
-          Text(
-            '터뜨린 할 일들을 확인할 수 있어요',
-            style: TextStyle(
-              color: Colors.white.withOpacity(0.5),
-              fontSize: 14,
-            ),
+          const SizedBox(width: 12),
+          Row(
+            children: [
+              // 달력 버튼 (왼쪽)
+              _GlassPressButton(
+                onTap: _toggleCalendar,
+                child: GlassmorphicContainer(
+                  width: 44,
+                  height: 44,
+                  borderRadius: 22,
+                  blur: 15,
+                  alignment: Alignment.center,
+                  border: 1,
+                  linearGradient: LinearGradient(
+                    colors: [Colors.white.withOpacity(0.15), Colors.white.withOpacity(0.05)],
+                  ),
+                  borderGradient: LinearGradient(
+                    colors: [Colors.white.withOpacity(0.4), Colors.white.withOpacity(0.1)],
+                  ),
+                  child: Icon(
+                    _isCalendarOpen ? Icons.keyboard_arrow_up_rounded : Icons.calendar_today_rounded,
+                    color: Colors.white,
+                    size: 20,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              // 닫기 버튼 (오른쪽)
+              _GlassPressButton(
+                onTap: () {
+                  FocusManager.instance.primaryFocus?.unfocus();
+                  Navigator.pop(context);
+                },
+                child: GlassmorphicContainer(
+                  width: 44,
+                  height: 44,
+                  borderRadius: 22,
+                  blur: 15,
+                  alignment: Alignment.center,
+                  border: 1,
+                  linearGradient: LinearGradient(
+                    colors: [Colors.white.withOpacity(0.2), Colors.white.withOpacity(0.1)],
+                  ),
+                  borderGradient: LinearGradient(
+                    colors: [Colors.white.withOpacity(0.4), Colors.white.withOpacity(0.1)],
+                  ),
+                  child: const Center(
+                    child: Icon(Icons.close_rounded, color: Colors.white, size: 20),
+                  ),
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -370,14 +631,16 @@ class _HistoryScreenState extends State<HistoryScreen> {
   Widget _buildHistoryList() {
     return SingleChildScrollView(
       controller: _scrollController,
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+      padding: const EdgeInsets.only(left: 20, right: 20, top: 110, bottom: 20),
       child: Column(
         children: [
           ..._historyData.entries.map((entry) {
+            // 섹션별 키 할당 (스크롤용)
+            final key = _sectionKeys.putIfAbsent(entry.key, () => GlobalKey());
             return _buildDateSection(
               entry.key,
               entry.value,
-              key: entry.key == _todayKeyStr ? _todayKey : null,
+              key: key,
             );
           }),
           // 오늘 날짜가 마지막 아이템일 때도 최상단에 위치할 수 있도록 여백 추가

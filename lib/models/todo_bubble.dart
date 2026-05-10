@@ -68,21 +68,22 @@ class TodoBubble {
 
     _time += 1.0;
 
-    // 바람 흔들림 (사인파 합성으로 불규칙한 흔들림 연출)
-    final windX = _windAmpX * sin(_time * _windFreqX + _phaseX)
-        + _windAmpX * 0.4 * sin(_time * _windFreqX * 2.3 + _phaseX * 1.5);
-    final windY = _windAmpY * sin(_time * _windFreqY + _phaseY)
-        + _windAmpY * 0.3 * sin(_time * _windFreqY * 1.7 + _phaseY * 0.8);
+    // 바람 흔들림 (사인파 합성으로 불규칙한 흔들림 연출) - 영향력 축소
+    final windX = _windAmpX * sin(_time * _windFreqX + _phaseX);
+    final windY = _windAmpY * sin(_time * _windFreqY + _phaseY);
 
-    // 바람 기반 속도 업데이트 (느리고 한가롭게)
+    // 마찰력 대폭 완화 (0.930 -> 0.985) 및 바람 영향 미세 조정 (0.04 -> 0.005)
+    // 너무 빨랐던 유영 속도를 대폭 낮춰 아주 살살 움직이게 했습니다.
     velocity = Offset(
-      velocity.dx * 0.970 + windX * 0.025,
-      velocity.dy * 0.970 + windY * 0.025,
+      velocity.dx * 0.985 + windX * 0.005,
+      velocity.dy * 0.985 + windY * 0.005,
     );
 
-    // 상태에 따른 속도 상한 (불기 중일 땐 조금 더 빠르고 시원하게)
-    final speedLimit = state == BubbleState.blowing ? 3.5 : 1.2;
-    final speed = velocity.distance;
+    // 상태에 따른 속도 상한 대폭 상향
+    final speedLimit = state == BubbleState.blowing ? 6.0 : 8.0;
+    double speed = velocity.distance;
+    
+    // 아주 낮은 속도에서도 멈추지 않고 계속 유영하도록 zeroing 로직 제거
     if (speed > speedLimit) {
       velocity = velocity / speed * speedLimit;
     }
@@ -90,12 +91,13 @@ class TodoBubble {
     position += velocity;
 
     // 화면 경계 - 부드럽게 밀어내기 (바운스 대신 반발력)
-    const margin = 20.0;
+    // 화면 경계 - 그림자/글로우 효과를 고려하여 미세한 마진 추가 (0.0 -> 2.0)
+    const margin = 2.0; 
     if (position.dx - radius < margin) {
-      velocity = Offset(velocity.dx.abs() * 0.6 + 0.5, velocity.dy);
+      velocity = Offset(velocity.dx.abs() * 0.7 + 0.5, velocity.dy);
       position = Offset(radius + margin, position.dy);
     } else if (position.dx + radius > screenSize.width - margin) {
-      velocity = Offset(-velocity.dx.abs() * 0.6 - 0.5, velocity.dy);
+      velocity = Offset(-velocity.dx.abs() * 0.7 - 0.5, velocity.dy);
       position = Offset(screenSize.width - radius - margin, position.dy);
     }
 
