@@ -339,7 +339,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
     final now = DateTime.now();
     if (_lastPhysicsTime != null) {
       // 프레임 레이트 제한 (최대 30fps) - 발열 방지를 위해 더 완화
-      if (now.difference(_lastPhysicsTime!).inMilliseconds < 30) return;
+    if (now.difference(_lastPhysicsTime!).inMilliseconds < 35) return;
     }
     _lastPhysicsTime = now;
 
@@ -357,12 +357,23 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
     _lastBottomLimit = bottomLimit;
     _lastTopLimit = topLimit;
 
-    // 최적화: 모든 날짜가 아닌 현재 보이고 있는 페이지와 양옆 페이지의 버블만 연산
+    // 현재 스와이프 중인지 확인 (소수점 자리가 있으면 스와이프 중)
+    double pageOffset = _currentPage.toDouble();
+    if (_pageController.hasClients && _pageController.position.haveDimensions) {
+      pageOffset = _pageController.page ?? _currentPage.toDouble();
+    }
+    final bool isSwiping = (pageOffset - pageOffset.round()).abs() > 0.01;
+
     final currentKey = _dateKey(_selectedDate);
-    final prevKey = _dateKey(_selectedDate.subtract(const Duration(days: 1)));
-    final nextKey = _dateKey(_selectedDate.add(const Duration(days: 1)));
+    final List<String> keysToUpdate = [currentKey];
+
+    // 스와이프 중일 때만 인접한 페이지의 물리 연산 수행
+    if (isSwiping) {
+      keysToUpdate.add(_dateKey(_selectedDate.subtract(const Duration(days: 1))));
+      keysToUpdate.add(_dateKey(_selectedDate.add(const Duration(days: 1))));
+    }
     
-    for (final key in [prevKey, currentKey, nextKey]) {
+    for (final key in keysToUpdate) {
       final bubbles = _bubblesByDate[key];
       if (bubbles == null || bubbles.isEmpty) continue;
 
@@ -490,11 +501,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
           reverseCurve: Curves.easeInCirc,
         );
         
+        // 전달받은 startPos(글로벌 좌표)를 그대로 사용 (데이터 좌표로 덮어쓰지 않음)
         Offset currentBubblePos = startPos;
-        try {
-          final liveBubble = _bubbles.firstWhere((b) => b.id == bubble.id);
-          currentBubblePos = liveBubble.position;
-        } catch (_) {}
 
         const dialogWidth = 320.0;
         const dialogHeight = 440.0; // 높이 상향 (아이콘 및 여백)
@@ -800,6 +808,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
 
     setState(() {
       bubble.state = BubbleState.popping;
+      _isDraggingBubble = false; // 터뜨릴 때 드래그 상태 해제하여 스와이프 복구
     });
 
     try {
@@ -1021,14 +1030,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
                                     children: bubbles
                                         .where((b) => b.state != BubbleState.popped && b.id != _morphingBubbleId)
                                         .map((bubble) {
-                                      // 물리 연산 시 LayoutBuilder에서 얻은 실제 크기 사용
-                                      if (isCurrentPage) {
-                                        bubble.update(actualSize, bottomLimit: _lastBottomLimit, topLimit: _lastTopLimit);
-                                      }
+                                      // 물리 연산은 _updatePhysics에서 일괄 처리하므로 여기서는 위치만 표시
                                       
                                       return Positioned(
-                                        left: bubble.position.dx - bubble.radius,
-                                        top: bubble.position.dy - bubble.radius,
+                                        left: bubble.position.dx - (bubble.radius * 1.25),
+                                        top: bubble.position.dy - (bubble.radius * 1.25),
                                         child: BubbleWidget(
                                           key: ValueKey(bubble.id),
                                           bubble: bubble,
@@ -1037,6 +1043,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
                                           onLongPress: (pos) => _showBubbleEditDialog(bubble, pos),
                                           onDragStart: (pos) => _handleBubbleDragStart(bubble),
                                           onPanDown: () => _handleBubblePanDown(),
+                                          onTapUp: () => _handleBubbleInteractionEnd(),
+                                          onTapCancel: () => _handleBubbleInteractionEnd(),
+                                          onPanCancel: () => _handleBubbleInteractionEnd(),
                                           onDragUpdate: (pos) => _handleBubbleDragUpdate(bubble, pos),
                                           onDragEnd: (vel) => _handleBubbleDragEnd(bubble, vel),
                                           isReadOnly: false, 
@@ -1369,6 +1378,14 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
     setState(() {
       _isDraggingBubble = true;
     });
+  }
+
+  void _handleBubbleInteractionEnd() {
+    if (_isDraggingBubble) {
+      setState(() {
+        _isDraggingBubble = false;
+      });
+    }
   }
 
   void _handleBubbleDragStart(TodoBubble bubble) {

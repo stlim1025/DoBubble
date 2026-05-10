@@ -20,11 +20,17 @@ class BubbleWidget extends StatefulWidget {
     this.isReadOnly = false,
     this.onDragStart,
     this.onPanDown,
+    this.onTapUp,
+    this.onTapCancel,
+    this.onPanCancel,
     this.onDragUpdate,
     this.onDragEnd,
   });
 
   final VoidCallback? onPanDown;
+  final VoidCallback? onTapUp;
+  final VoidCallback? onTapCancel;
+  final VoidCallback? onPanCancel;
   final Function(Offset position)? onDragStart;
   final Function(Offset position)? onDragUpdate;
   final Function(Offset velocity)? onDragEnd;
@@ -101,18 +107,36 @@ class _BubbleWidgetState extends State<BubbleWidget>
       },
       onTapUp: (_) {
         setState(() => _isPressed = false);
+        widget.onTapUp?.call();
         if (widget.bubble.state == BubbleState.floating && !widget.isReadOnly) {
           HapticFeedback.mediumImpact();
           widget.onPop();
         }
       },
-      onTapCancel: () => setState(() => _isPressed = false),
+      onTapCancel: () {
+        setState(() => _isPressed = false);
+        widget.onTapCancel?.call();
+      },
       onPanDown: (_) {
         if (!widget.isReadOnly) {
           widget.onPanDown?.call();
         }
       },
-      onLongPress: widget.onLongPress != null ? () => widget.onLongPress!(widget.bubble.position) : null,
+      onPanCancel: () {
+        if (!widget.isReadOnly) {
+          widget.onPanCancel?.call();
+        }
+      },
+      onLongPress: widget.onLongPress != null 
+        ? () {
+            final RenderBox? box = context.findRenderObject() as RenderBox?;
+            if (box != null) {
+              // 위젯의 크기(radius * 2.5)의 절반인 중심점의 글로벌 좌표를 구함
+              final center = box.localToGlobal(Offset(widget.bubble.radius * 1.25, widget.bubble.radius * 1.25));
+              widget.onLongPress!(center);
+            }
+          } 
+        : null,
       onPanStart: (details) {
         if (!widget.isReadOnly) {
           HapticFeedback.selectionClick();
