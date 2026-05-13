@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:padding="8dp"
+    android:background="@drawable/widget_background">
+
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent">
+
+        <ImageView
+            android:id="@+id/widget_image"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:scaleType="fitCenter"
+            android:adjustViewBounds="true" />
+
+        <!-- List Area for Small Widget (2x2) -->
+        <LinearLayout
+            android:id="@+id/list_container"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:orientation="vertical"
+            android:padding="16dp"
+            android:visibility="gone">
+            <!-- Space for progress chip -->
+            <FrameLayout android:layout_width="match_parent" android:layout_height="24dp"/>
+            
+            <FrameLayout android:id="@+id/list_slot_0" android:layout_width="match_parent" android:layout_height="32dp" android:layout_marginBottom="4dp" android:clickable="true" android:visibility="gone"/>
+            <FrameLayout android:id="@+id/list_slot_1" android:layout_width="match_parent" android:layout_height="32dp" android:layout_marginBottom="4dp" android:clickable="true" android:visibility="gone"/>
+            <FrameLayout android:id="@+id/list_slot_2" android:layout_width="match_parent" android:layout_height="32dp" android:layout_marginBottom="4dp" android:clickable="true" android:visibility="gone"/>
+            <FrameLayout android:id="@+id/list_slot_3" android:layout_width="match_parent" android:layout_height="32dp" android:layout_marginBottom="4dp" android:clickable="true" android:visibility="gone"/>
+        </LinearLayout>
+
+        <!-- Grid Area for Medium/Large Widgets -->
+        <GridLayout
+            android:id="@+id/grid_container"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:rowCount="3"
+            android:columnCount="3"
+            android:padding="16dp"
+            android:visibility="gone">
+            
+            <FrameLayout android:id="@+id/grid_slot_0" android:layout_width="0dp" android:layout_height="0dp" android:layout_rowWeight="1" android:layout_columnWeight="1" android:clickable="true" android:visibility="gone" />
+            <FrameLayout android:id="@+id/grid_slot_1" android:layout_width="0dp" android:layout_height="0dp" android:layout_rowWeight="1" android:layout_columnWeight="1" android:clickable="true" android:visibility="gone" />
+            <FrameLayout android:id="@+id/grid_slot_2" android:layout_width="0dp" android:layout_height="0dp" android:layout_rowWeight="1" android:layout_columnWeight="1" android:clickable="true" android:visibility="gone" />
+            <FrameLayout android:id="@+id/grid_slot_3" android:layout_width="0dp" android:layout_height="0dp" android:layout_rowWeight="1" android:layout_columnWeight="1" android:clickable="true" android:visibility="gone" />
+            <FrameLayout android:id="@+id/grid_slot_4" android:layout_width="0dp" android:layout_height="0dp" android:layout_rowWeight="1" android:layout_columnWeight="1" android:clickable="true" android:visibility="gone" />
+            <FrameLayout android:id="@+id/grid_slot_5" android:layout_width="0dp" android:layout_height="0dp" android:layout_rowWeight="1" android:layout_columnWeight="1" android:clickable="true" android:visibility="gone" />
+            <FrameLayout android:id="@+id/grid_slot_6" android:layout_width="0dp" android:layout_height="0dp" android:layout_rowWeight="1" android:layout_columnWeight="1" android:clickable="true" android:visibility="gone" />
+            <FrameLayout android:id="@+id/grid_slot_7" android:layout_width="0dp" android:layout_height="0dp" android:layout_rowWeight="1" android:layout_columnWeight="1" android:clickable="true" android:visibility="gone" />
+            <FrameLayout android:id="@+id/grid_slot_8" android:layout_width="0dp" android:layout_height="0dp" android:layout_rowWeight="1" android:layout_columnWeight="1" android:clickable="true" android:visibility="gone" />
+        </GridLayout>
+    </FrameLayout>
+
+    <LinearLayout
+        android:id="@+id/widget_footer"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_alignParentBottom="true"
+        android:orientation="horizontal"
+        android:paddingTop="4dp">
+        
+        <ImageView
+            android:layout_width="12dp"
+            android:layout_height="12dp"
+            android:src="@android:drawable/ic_menu_info_details"
+            android:layout_gravity="center_vertical"
+            android:layout_marginRight="4dp"/>
+
+        <TextView
+            android:id="@+id/widget_progress"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="0 / 0"
+            android:textColor="#CCCCCC"
+            android:textSize="10sp"/>
+    </LinearLayout>
+
+</RelativeLayout>

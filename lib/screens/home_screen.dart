@@ -11,6 +11,8 @@ import '../widgets/glass_calendar.dart';
 import 'history_screen.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:glassmorphism/glassmorphism.dart';
+import '../services/widget_service.dart';
+import 'package:home_widget/home_widget.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -220,12 +222,75 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive || state == AppLifecycleState.detached) {
+    if (state == AppLifecycleState.resumed) {
+      // 앱으로 돌아왔을 때 위젯 등 외부에서 변경된 데이터 반영
+      _loadInitialBubbles();
+    } else if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive || state == AppLifecycleState.detached) {
       _saveBubbles();
     }
   }
 
   Future<void> _loadInitialBubbles() async {
+    // 0. 위젯에서 전달된 완료 신호 먼저 처리
+    try {
+      // Android/Common (pending_popped_ids)
+      final String? pendingJson = await HomeWidget.getWidgetData<String>('pending_popped_ids');
+      List<String> poppedIds = [];
+      
+      if (pendingJson != null && pendingJson.isNotEmpty && pendingJson != 'null') {
+        final dynamic decoded = jsonDecode(pendingJson);
+        if (decoded is List) {
+          poppedIds.addAll(List<String>.from(decoded));
+        }
+      }
+      
+      // iOS Interactive Widget (popped_bubble_id)
+      final String? iosPoppedId = await HomeWidget.getWidgetData<String>('popped_bubble_id');
+      if (iosPoppedId != null && iosPoppedId.isNotEmpty) {
+        if (!poppedIds.contains(iosPoppedId)) {
+          poppedIds.add(iosPoppedId);
+        }
+        // iOS 신호 확인 완료
+        await HomeWidget.saveWidgetData('popped_bubble_id', '');
+      }
+
+      if (poppedIds.isNotEmpty) {
+        final prefs = await SharedPreferences.getInstance();
+        final keys = prefs.getKeys().where((k) => k.startsWith('bubbles_')).toList();
+        
+        bool anyChanged = false;
+        for (final id in poppedIds) {
+          for (final key in keys) {
+            final data = prefs.getString(key);
+            if (data != null) {
+              List<dynamic> list = jsonDecode(data);
+              bool changed = false;
+              for (var item in list) {
+                if (item['id'].toString() == id) {
+                  if (item['state'] != 3) {
+                    item['state'] = 3;
+                    changed = true;
+                    anyChanged = true;
+                  }
+                  break;
+                }
+              }
+              if (changed) {
+                await prefs.setString(key, jsonEncode(list));
+              }
+            }
+          }
+        }
+        
+        // 처리 완료 후 신호 비우기
+        if (anyChanged) {
+          await HomeWidget.saveWidgetData('pending_popped_ids', '');
+        }
+      }
+    } catch (e) {
+      debugPrint('Error processing pending widget pops: $e');
+    }
+
     // 앱 시작 시 어제, 오늘, 내일 3일치를 미리 로드
     final today = _today;
     final yesterday = today.subtract(const Duration(days: 1));
@@ -331,6 +396,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin, 
     // 반복 할일 템플릿 저장 (항상 공통)
     final String repeatingJson = jsonEncode(_repeatingTemplates.map((b) => b.toJson()).toList());
     await prefs.setString('repeating_templates', repeatingJson);
+
+    // 위젯 갱신 (오늘 날짜인 경우에만)
+    if (_isViewingToday) {
+      await WidgetService.updateWidgetData(_bubbles);
+    }
   }
 
   void _updatePhysics() {

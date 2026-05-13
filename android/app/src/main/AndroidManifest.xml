@@ -30,6 +30,45 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+
+        <!-- Small Widget (2x2) -->
+        <receiver android:name="com.lemonary.dobubble.BubbleWidgetProviderSmall" android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data android:name="android.appwidget.provider"
+                android:resource="@xml/bubble_widget_info_small" />
+        </receiver>
+
+        <!-- Medium Widget (4x2) -->
+        <receiver android:name="com.lemonary.dobubble.BubbleWidgetProviderMedium" android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data android:name="android.appwidget.provider"
+                android:resource="@xml/bubble_widget_info_medium" />
+        </receiver>
+
+        <!-- Large Widget (4x4) -->
+        <receiver android:name="com.lemonary.dobubble.BubbleWidgetProviderLarge" android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data android:name="android.appwidget.provider"
+                android:resource="@xml/bubble_widget_info_large" />
+        </receiver>
+        <!-- Background receiver to handle widget interactions -->
+        <receiver android:name="es.antonborri.home_widget.HomeWidgetBackgroundReceiver" 
+                  android:exported="true">
+            <intent-filter>
+                <action android:name="es.antonborri.home_widget.action.BACKGROUND" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Background service to process the action -->
+        <service android:name="es.antonborri.home_widget.HomeWidgetBackgroundService" 
+                 android:permission="android.permission.BIND_JOB_SERVICE" 
+                 android:exported="true"/>
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and

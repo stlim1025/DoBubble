@@ -8,6 +8,7 @@ import 'package:glassmorphism/glassmorphism.dart';
 import 'package:flutter/rendering.dart';
 import '../models/todo_bubble.dart';
 import '../widgets/glass_calendar.dart';
+import 'package:home_widget/home_widget.dart';
 
 class HistoryScreen extends StatefulWidget {
   final Map<String, List<TodoBubble>>? initialData;
@@ -17,7 +18,7 @@ class HistoryScreen extends StatefulWidget {
   State<HistoryScreen> createState() => _HistoryScreenState();
 }
 
-class _HistoryScreenState extends State<HistoryScreen> with TickerProviderStateMixin {
+class _HistoryScreenState extends State<HistoryScreen> with TickerProviderStateMixin, WidgetsBindingObserver {
   final Map<String, List<TodoBubble>> _historyData = {};
   bool _isLoading = true;
   final Map<String, GlobalKey> _sectionKeys = {}; // 날짜별 섹션 키 저장
@@ -36,6 +37,7 @@ class _HistoryScreenState extends State<HistoryScreen> with TickerProviderStateM
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _removeRouteListener();
     _scrollController.dispose();
     _calendarController.dispose();
@@ -85,6 +87,7 @@ class _HistoryScreenState extends State<HistoryScreen> with TickerProviderStateM
     );
     
     _scrollController.addListener(_scrollListener);
+    WidgetsBinding.instance.addObserver(this);
     
     if (widget.initialData != null) {
       _historyData.addAll(widget.initialData!);
@@ -96,7 +99,56 @@ class _HistoryScreenState extends State<HistoryScreen> with TickerProviderStateM
   }
 
 
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _loadHistory();
+    }
+  }
+
   Future<void> _loadHistory() async {
+    // 0. 위젯에서 전달된 완료 신호(pending_popped_ids) 처리
+    try {
+      final String? pendingJson = await HomeWidget.getWidgetData<String>('pending_popped_ids');
+      if (pendingJson != null && pendingJson.isNotEmpty && pendingJson != 'null') {
+        final dynamic decoded = jsonDecode(pendingJson);
+        if (decoded is List && decoded.isNotEmpty) {
+          final List<String> pendingIds = List<String>.from(decoded);
+          final prefs = await SharedPreferences.getInstance();
+          final keys = prefs.getKeys().where((k) => k.startsWith('bubbles_')).toList();
+          
+          bool anyChanged = false;
+          for (final id in pendingIds) {
+            for (final key in keys) {
+              final data = prefs.getString(key);
+              if (data != null) {
+                List<dynamic> list = jsonDecode(data);
+                bool changed = false;
+                for (var item in list) {
+                  if (item['id'].toString() == id) {
+                    if (item['state'] != 3) {
+                      item['state'] = 3;
+                      changed = true;
+                      anyChanged = true;
+                    }
+                    break;
+                  }
+                }
+                if (changed) {
+                  await prefs.setString(key, jsonEncode(list));
+                }
+              }
+            }
+          }
+          if (anyChanged) {
+            await HomeWidget.saveWidgetData('pending_popped_ids', '');
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('Error processing pending widget pops in History: $e');
+    }
+
     final prefs = await SharedPreferences.getInstance();
     final now = DateTime.now();
     final todayKey = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
@@ -664,10 +716,14 @@ class _HistoryScreenState extends State<HistoryScreen> with TickerProviderStateM
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(
-                _formatDate(date),
-                style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+              Expanded(
+                child: Text(
+                  _formatDate(date),
+                  style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                  overflow: TextOverflow.ellipsis,
+                ),
               ),
+              const SizedBox(width: 8),
               Text(
                 '톡! $poppedCount / $totalCount',
                 style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 14),
